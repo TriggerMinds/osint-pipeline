@@ -5,7 +5,7 @@ from .gdelt import GDELTConnector
 from .archive_cdx import ArchiveCDXConnector
 from .commoncrawl import CommonCrawlConnector
 from .openalex import OpenAlexConnector
-from .github import GitHubSearchConnector
+from .github_search import GitHubSearchConnector
 from .wikidata import WikidataConnector
 from .reddit import RedditConnector
 
