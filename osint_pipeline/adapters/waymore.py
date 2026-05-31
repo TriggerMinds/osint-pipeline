@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from ..models.source import SourceMetadata, SourceResult, SourceType, FetchStatus
+
+# Basic DNS-name pattern: letters, digits, dots, hyphens, and colons (for IPv6).
+_VALID_DOMAIN_RE = re.compile(r"^[a-zA-Z0-9.:\-]+$")
+_MAX_DOMAIN_LENGTH = 253
 
 
 class WaymoreAdapter:
@@ -38,6 +43,10 @@ class WaymoreAdapter:
     async def search(self, domain: str, limit: int = 50) -> list[SourceResult]:
         if not self.available:
             raise RuntimeError(self.install_hint)
+
+        # Validate domain before passing to an external binary.
+        if not domain or len(domain) > _MAX_DOMAIN_LENGTH or not _VALID_DOMAIN_RE.match(domain):
+            raise RuntimeError(f"Waymore search rejected domain: invalid characters or length")
 
         now = datetime.now(timezone.utc).isoformat()
         results: list[SourceResult] = []

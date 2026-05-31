@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..config import get_settings
 from .runtime import BrowserRenderResult, BrowserRuntime, RuntimeCheckResult
+
+# Only http/https URLs are allowed through to the browser binary.
+_ALLOWED_URL_SCHEMES = frozenset(["http", "https"])
+# Reject control characters and shell-significant chars in the URL value.
+_URL_REJECT_RE = re.compile(r"[\x00-\x1f\x7f\"'`$<>|&;()]")
 
 
 class CloakBrowserRuntime(BrowserRuntime):
@@ -34,6 +41,19 @@ class CloakBrowserRuntime(BrowserRuntime):
         if not exe:
             return BrowserRenderResult(
                 html="", error="CloakBrowser executable not configured"
+            )
+
+        # Validate URL before passing to an external binary.
+        parsed = urlparse(url)
+        if parsed.scheme not in _ALLOWED_URL_SCHEMES:
+            return BrowserRenderResult(
+                html="",
+                error=f"CloakBrowser render rejected URL: unsupported scheme '{parsed.scheme}'",
+            )
+        if _URL_REJECT_RE.search(url):
+            return BrowserRenderResult(
+                html="",
+                error="CloakBrowser render rejected URL: contains disallowed characters",
             )
 
         try:

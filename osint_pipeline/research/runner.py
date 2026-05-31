@@ -31,6 +31,28 @@ from .strategies import build_discovery_strategy
 
 _TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|_ga|_gl)", re.IGNORECASE)
 
+# Maximum length for a raw dork query sent to external connectors.
+_DORK_QUERY_MAX_LENGTH = 500
+# Characters that should never appear in a dork query sent to an API.
+_DORK_QUERY_REJECT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _sanitize_dork_query(raw: str) -> str:
+    """Validate and sanitise a dork query string before sending to a connector.
+
+    Strips leading/trailing whitespace, enforces a maximum length, and
+    rejects control characters.  Returns the cleaned string.
+    Raises ``ValueError`` if the query is empty after trimming.
+    """
+    q = raw.strip()
+    if not q:
+        raise ValueError("dork query is empty")
+    if len(q) > _DORK_QUERY_MAX_LENGTH:
+        q = q[:_DORK_QUERY_MAX_LENGTH]
+    if _DORK_QUERY_REJECT_RE.search(q):
+        raise ValueError("dork query contains control characters")
+    return q
+
 
 @dataclass
 class ResearchRunConfig:
@@ -68,7 +90,11 @@ _ALL_CONNECTORS = [
 _CONNECTOR_INSTANCES: dict[str, object] | None = None
 
 
-def _get_connector(name: str):
+def _init_connector_registry() -> dict[str, object]:
+    """Eagerly initialise the shared connector registry if not yet done.
+
+    Returns the registry dict so callers never receive ``None``.
+    """
     global _CONNECTOR_INSTANCES
     if _CONNECTOR_INSTANCES is None:
         _CONNECTOR_INSTANCES = {
@@ -82,7 +108,11 @@ def _get_connector(name: str):
             "reddit": RedditConnector(),
             "archive_today": ArchiveTodayConnector(),
         }
-    return _CONNECTOR_INSTANCES.get(name)
+    return _CONNECTOR_INSTANCES
+
+
+def _get_connector(name: str):
+    return _init_connector_registry().get(name)
 
 
 def _canonical_url(url: str, mode: str = "url") -> str:
@@ -223,6 +253,11 @@ class ResearchRunner:
             per_connector_counts[route.connector] = cc + 1
 
             query_for_search = d.raw or d.description or query
+            try:
+                query_for_search = _sanitize_dork_query(query_for_search)
+            except ValueError as ve:
+                artifact.add_error(f"dork[{i}]: {ve}, skipping")
+                continue
 
             if cfg.dry_run:
                 conn_results.append(ConnectorExecutionResult(
@@ -317,7 +352,7 @@ class ResearchRunner:
                 timeout_seconds=cfg.connector_timeout_seconds,
             )
             executor = AsyncConnectorExecutor(exec_config)
-            task_results = await executor.execute_batch(executor_tasks, _CONNECTOR_INSTANCES or {})
+            task_results = await executor.execute_batch(executor_tasks, _init_connector_registry())
 
             for tr in task_results:
                 capped = tr.sources[:cfg.max_results_per_connector]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -42,6 +42,7 @@ class ArchiveCDXConnector(BaseConnector):
         return await self._search(params)
 
     async def _search(self, params: ArchiveCDXParams) -> ConnectorResult:
+        now_dt = datetime.now(timezone.utc).isoformat()
         query_params: dict = {
             "url": params.url,
             "output": "json",
@@ -98,7 +99,7 @@ class ArchiveCDXConnector(BaseConnector):
                         source_type=SourceType.INTERNET_ARCHIVE,
                         language="unknown",
                         discovered_by_query=params.url,
-                        discovered_at=snapshot or "",
+                        discovered_at=now_dt,
                         snapshot_date=snapshot,
                         domain=self._extract_domain(url),
                         status_code=self._safe_int(row_map.get("statuscode")),

@@ -22,10 +22,6 @@ class EvidenceRanker:
                 elif claim.conflict_status == ConflictMarker.CONFLICTING:
                     score *= 0.6
 
-                # English primary language boost
-                if ev.language == "en":
-                    score += 0.05
-
                 scores.append(min(score, 1.0))
 
             if scores:
