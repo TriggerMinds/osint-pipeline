@@ -53,6 +53,8 @@ class ResearchArtifact(BaseModel):
     quality_controls: Optional[dict] = None
     coverage: Optional[dict] = None
     discovery_strategy: Optional[dict] = None
+    research_plan: Optional[dict] = None
+    planner_warnings: Optional[list[str]] = None
 
     def add_error(self, msg: str) -> None:
         self.errors.append(sanitize_error_message(msg))

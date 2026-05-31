@@ -27,6 +27,7 @@ from .connectors import (
 from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
 from .research.strategies import PROFILE_SEARXNG
 from .runs_manager import RunArchiver
+from .planning import rule_based_plan, refine_plan_with_llm, apply_plan_to_config, evaluate_plan_coverage
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -441,6 +442,7 @@ def run_research(
     language: Optional[list[str]] = typer.Option(None, "--language", "-l", help="Allowed language codes"),
     archive: str = typer.Option("live_first", "--archive", help="live_first, archive_first, archive_only"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Expand+dork+route only, no connector calls"),
+    auto_plan: bool = typer.Option(False, "--auto-plan", help="Automatically select profile/connectors based on query"),
     concurrency: Optional[int] = typer.Option(None, "--concurrency", help="Max concurrent connector calls"),
     per_connector_concurrency: Optional[int] = typer.Option(None, "--per-connector-concurrency", help="Max concurrent calls per connector"),
     connector_timeout: float = typer.Option(30.0, "--connector-timeout", help="Connector timeout in seconds"),
@@ -451,6 +453,20 @@ def run_research(
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
     p = profile
     _disabled = disable_connector
+    plan_data = None
+    plan_warnings = None
+
+    if auto_plan:
+        plan = rule_based_plan(query)
+        plan = _run_async(refine_plan_with_llm(query, plan))
+        cfg_auto = apply_plan_to_config(plan)
+        p = cfg_auto._profile_name
+        _disabled = cfg_auto.disabled_connectors
+        # Use plan values unless CLI explicitly overrode
+        if not profile and not disable_connector and not language:
+            profile = p
+            disable_connector = cfg_auto.disabled_connectors
+            language = cfg_auto.enabled_languages
 
     if p is None:
         presets = dict(max_dorks=25, max_results=50, max_tasks=3, max_per=20,
@@ -531,6 +547,10 @@ def run_research(
         fixture_dir=str(fixture_dir) if fixture_dir else None,
     )
     artifact = _run_async(runner.run(query, config))
+
+    if auto_plan and plan:
+        artifact.research_plan = plan.model_dump()
+        artifact.planner_warnings = evaluate_plan_coverage(plan, artifact.model_dump_safe())
 
     status_color = "[green]" if artifact.status == "completed" else "[yellow]"
     t = artifact.timing
@@ -684,6 +704,47 @@ def validate_artifact(
         f"Timing: {t.total:.1f}s  |  Dry-run: {artifact.dry_run}",
         title="Artifact Summary",
     ))
+
+
+@app.command()
+def plan_research(
+    query: str = typer.Argument(..., help="Research query to plan"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+) -> None:
+    """Analyze a query and produce a ResearchPlan (rule-based + optional LLM)."""
+    plan = rule_based_plan(query)
+    plan = _run_async(refine_plan_with_llm(query, plan))
+    plan_data = plan.model_dump()
+
+    table = Table(title="Research Plan")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("Intent", plan.intent.value)
+    table.add_row("Profile", plan.profile)
+    table.add_row("Confidence", f"{plan.confidence:.2f}")
+    table.add_row("Languages", ", ".join(plan.languages))
+    table.add_row("Archive", plan.archive_preference)
+    table.add_row("SearXNG Strategy", plan.searxng_strategy)
+    table.add_row("Connectors", ", ".join(c.connector for c in plan.connectors))
+    table.add_row("Required", ", ".join(plan.required_connectors))
+    table.add_row("Strategies", ", ".join(plan.query_strategies))
+    if plan.planner_warnings:
+        for w in plan.planner_warnings:
+            table.add_row("Warning", f"[yellow]{w}[/yellow]")
+
+    console.print(table)
+
+    if output:
+        output.write_text(
+            json.dumps(plan_data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        console.print(f"[green]Written to {output}[/green]")
+
+    archiver = RunArchiver()
+    archiver.archive_run(
+        query=query, artifact_data=plan_data, profile="plan_research",
+    )
 
 
 @app.command()
