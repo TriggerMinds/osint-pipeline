@@ -5,11 +5,16 @@ from osint_pipeline.utils.validation import parse_llm_json, validate_llm_output
 
 
 class TestQueryExpansion:
-    def test_expanded_query_defaults(self):
-        eq = ExpandedQuery(original="test query")
+    def test_expanded_query_requires_language_and_variants(self):
+        eq = ExpandedQuery(original="test query", language="en", variants=["v1"])
         assert eq.original == "test query"
-        assert eq.variants == []
+        assert eq.variants == ["v1"]
         assert eq.language == "en"
+
+    def test_expanded_query_empty_variants_fails(self):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            ExpandedQuery(original="test", language="en", variants=[])
 
     def test_expanded_query_with_variants(self):
         eq = ExpandedQuery(

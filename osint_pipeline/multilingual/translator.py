@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
 from ..config import get_settings
 from ..models.query import MultilingualQuery
+from ..utils.validation import parse_llm_json, validate_llm_output
 
 TRANSLATION_PROMPT = """You are a multilingual search query translator for OSINT.
 
@@ -20,6 +19,10 @@ Set transliteration to a romanized version for non-Latin scripts, null otherwise
 TARGET_LANGUAGES = [
     "nl", "en", "de", "fr", "ru", "zh", "ar", "es", "fa", "tr", "uk", "ja", "ko",
 ]
+
+
+class TranslatorError(Exception):
+    pass
 
 
 class MultilingualTranslator:
@@ -56,15 +59,33 @@ class MultilingualTranslator:
             )
 
             raw = resp.choices[0].message.content or "{}"
-            data = json.loads(raw)
 
-            results.append(
-                MultilingualQuery(
-                    original=query,
-                    target_language=lang,
-                    translated=data.get("translated", query),
-                    transliteration=data.get("transliteration"),
+            parse_result = parse_llm_json(raw)
+            if not parse_result.success:
+                raise TranslatorError(
+                    f"LLM returned invalid JSON for language '{lang}': {parse_result.error}"
                 )
+
+            data = parse_result.data
+
+            translated = data.get("translated")
+            if not translated or not isinstance(translated, str) or not translated.strip():
+                raise TranslatorError(
+                    f"LLM missing or empty 'translated' field for language '{lang}'"
+                )
+
+            mq = MultilingualQuery(
+                original=query,
+                target_language=lang,
+                translated=translated,
+                transliteration=data.get("transliteration"),
             )
+            val = validate_llm_output(MultilingualQuery, mq.model_dump())
+            if not val.success:
+                raise TranslatorError(
+                    f"Pydantic validation failed for language '{lang}': {val.error}"
+                )
+
+            results.append(mq)
 
         return results

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
-
 from ..config import get_settings
 from ..models.evidence import Evidence, EvidenceClaim, ConflictMarker, EvidenceCollection
 from ..models.source import SourceResult
+from ..utils.validation import parse_llm_json, validate_llm_output
 
 EXTRACT_PROMPT = """You are an evidence extraction specialist for OSINT.
 
@@ -24,6 +23,10 @@ Rules:
 - Do NOT infer or hallucinate.
 - Confidence: 0.3-0.5 vague, 0.5-0.8 clear, 0.8-1.0 explicit + specific.
 - Empty claims list if content is meaningless."""  # noqa: E501
+
+
+class EvidenceExtractorError(Exception):
+    pass
 
 
 class EvidenceExtractor:
@@ -59,18 +62,52 @@ class EvidenceExtractor:
             )
 
             raw = resp.choices[0].message.content or "{}"
-            data = json.loads(raw)
 
-            claims = []
-            for c in data.get("claims", []):
-                claims.append(
-                    EvidenceClaim(
-                        claim=c.get("claim", ""),
-                        supporting_urls=[src.metadata.url],
-                        confidence=c.get("confidence", 0.5),
-                        category=c.get("category"),
-                        language=src.metadata.language,
-                    )
+            parse_result = parse_llm_json(raw)
+            if not parse_result.success:
+                raise EvidenceExtractorError(
+                    f"LLM returned invalid JSON for {src.metadata.url}: {parse_result.error}"
+                )
+
+            data = parse_result.data
+            raw_claims = data.get("claims")
+            if not isinstance(raw_claims, list):
+                raw_claims = []
+
+            claims: list[EvidenceClaim] = []
+            errors: list[str] = []
+
+            for i, c in enumerate(raw_claims):
+                idx = f"claims[{i}]"
+
+                claim_text = c.get("claim")
+                if not claim_text or not isinstance(claim_text, str) or not claim_text.strip():
+                    errors.append(f"{idx}.claim: missing or empty")
+                    continue
+
+                confidence = c.get("confidence")
+                if confidence is None or not isinstance(confidence, (int, float)):
+                    errors.append(f"{idx}.confidence: missing or invalid")
+                    continue
+
+                ec = EvidenceClaim(
+                    claim=claim_text,
+                    supporting_urls=[src.metadata.url],
+                    confidence=confidence,
+                    category=c.get("category"),
+                    language=src.metadata.language,
+                )
+                val = validate_llm_output(EvidenceClaim, ec.model_dump())
+                if not val.success:
+                    errors.append(f"{idx}: Pydantic validation failed: {val.error}")
+                    continue
+
+                claims.append(ec)
+
+            if errors:
+                raise EvidenceExtractorError(
+                    f"Evidence extraction for {src.metadata.url} produced {len(errors)} "
+                    f"invalid claim(s):\n" + "\n".join(f"  - {e}" for e in errors)
                 )
 
             evidence = Evidence(

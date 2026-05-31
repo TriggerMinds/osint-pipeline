@@ -63,21 +63,54 @@ class QueryExpander:
             )
 
         data = parse_result.data
+        raw_expansions = data.get("expansions")
+
+        if not isinstance(raw_expansions, list) or not raw_expansions:
+            raise QueryExpanderError(
+                "LLM returned missing or empty 'expansions' array"
+            )
 
         results: list[ExpandedQuery] = []
-        for exp in data.get("expansions", []):
+        errors: list[str] = []
+
+        for i, exp in enumerate(raw_expansions):
+            idx = f"expansions[{i}]"
+
+            language = exp.get("language")
+            if not language or not isinstance(language, str):
+                errors.append(f"{idx}.language: missing or invalid")
+                continue
+
+            variants = exp.get("variants")
+            if not isinstance(variants, list) or not variants:
+                errors.append(f"{idx}.variants: missing or empty")
+                continue
+
+            for v in variants:
+                if not isinstance(v, str) or not v.strip():
+                    errors.append(f"{idx}.variants: contains non-string or empty entry")
+                    continue
+
+            rationale = exp.get("rationale", "")
+
             eq = ExpandedQuery(
                 original=query,
-                variants=exp.get("variants", []),
-                language=exp.get("language", "en"),
-                rationale=exp.get("rationale", ""),
+                variants=variants,
+                language=language,
+                rationale=rationale,
             )
             val = validate_llm_output(ExpandedQuery, eq.model_dump())
             if not val.success:
-                raise QueryExpanderError(
-                    f"Validation failed for expansion: {val.error}"
-                )
+                errors.append(f"{idx}: Pydantic validation failed: {val.error}")
+                continue
+
             results.append(eq)
+
+        if errors:
+            raise QueryExpanderError(
+                f"Query expansion produced {len(errors)} invalid item(s):\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
 
         # Verify at minimum nl/en/de/fr
         langs_found = {r.language for r in results}

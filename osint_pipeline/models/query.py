@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 
 class ExpandedQuery(BaseModel):
     original: str
-    variants: list[str] = Field(default_factory=list)
-    language: str = "en"
+    variants: list[str] = Field(min_length=1)
+    language: str
     rationale: str = ""
 
 
