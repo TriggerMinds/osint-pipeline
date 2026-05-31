@@ -1,61 +1,172 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OSINT Dork Query Schema",
-  "description": "Schema-constrained dork queries for OSINT search engine enumeration. Every dork must include a raw query string, a mapping of operators to values, and a target search engine.",
+  "description": "Schema-constrained dork queries for OSINT search engine enumeration. Generated from Pydantic models — do not edit manually.",
   "type": "object",
-  "required": ["schema_version", "dork_queries"],
+  "required": [
+    "dork_queries"
+  ],
   "properties": {
     "schema_version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+$",
-      "description": "Semantic version of the schema"
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
     },
     "description": {
-      "type": "string",
-      "description": "Optional description of the dork set"
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "intent": {
+      "properties": {
+        "original_query": {
+          "default": "",
+          "title": "Original Query",
+          "type": "string"
+        },
+        "intent": {
+          "default": "",
+          "title": "Intent",
+          "type": "string"
+        },
+        "entities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Entities",
+          "type": "array"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        }
+      },
+      "title": "ExpandedIntent",
+      "type": "object"
+    },
+    "entities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "languages": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Languages",
+      "type": "array"
+    },
+    "negative_terms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Negative Terms",
+      "type": "array"
+    },
+    "validation_rules": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Validation Rules",
+      "type": "object"
     },
     "dork_queries": {
-      "type": "array",
-      "minItems": 1,
       "items": {
-        "type": "object",
-        "required": ["raw", "operators", "target"],
         "properties": {
           "raw": {
-            "type": "string",
             "minLength": 1,
-            "description": "The full raw dork query string"
+            "title": "Raw",
+            "type": "string"
           },
-            "operators": {
-            "type": "object",
-            "patternProperties": {
-              "^(site|intitle|inurl|intext|filetype|inanchor|before|after|allintitle|allinurl|allintext|source|numrange)$": {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 1
-              }
+          "operators": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
-            "additionalProperties": false,
-            "minProperties": 1,
-            "description": "Parsed dork operators and their values"
+            "propertyNames": {
+              "enum": [
+                "site",
+                "intitle",
+                "inurl",
+                "intext",
+                "filetype",
+                "inanchor",
+                "before",
+                "after",
+                "allintitle",
+                "allinurl",
+                "allintext",
+                "source",
+                "numrange"
+              ]
+            },
+            "title": "Operators",
+            "type": "object"
           },
           "target": {
-            "type": "string",
-            "enum": ["google", "bing", "duckduckgo", "yandex", "shodan", "censys"],
-            "description": "Target search engine"
+            "enum": [
+              "google",
+              "bing",
+              "duckduckgo",
+              "yandex",
+              "searxng",
+              "archive_cdx",
+              "gdelt",
+              "commoncrawl",
+              "openalex",
+              "github",
+              "reddit",
+              "wikidata"
+            ],
+            "title": "DorkTarget",
+            "type": "string"
           },
           "description": {
-            "type": "string",
-            "description": "Human-readable explanation of this dork's intent"
+            "default": "",
+            "title": "Description",
+            "type": "string"
           },
           "language": {
-            "type": "string",
-            "description": "ISO language code for the dork"
+            "default": "",
+            "title": "Language",
+            "type": "string"
+          },
+          "purpose": {
+            "default": "",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "expected_signal": {
+            "default": "",
+            "title": "Expected Signal",
+            "type": "string"
+          },
+          "risk_level": {
+            "enum": [
+              "safe",
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "RiskLevel",
+            "type": "string"
           }
         },
-        "additionalProperties": false
-      }
+        "required": [
+          "raw"
+        ],
+        "title": "DorkQuery",
+        "type": "object"
+      },
+      "title": "Dork Queries",
+      "type": "array"
     }
-  },
-  "additionalProperties": false
+  }
 }

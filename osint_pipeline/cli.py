@@ -11,8 +11,8 @@ from rich.table import Table
 from rich.panel import Panel
 
 from .config import get_settings
-from .query_expansion import QueryExpander
-from .dork_generation import DorkGenerator, validate_dork
+from .query_expansion import QueryExpander, QueryExpanderError
+from .dork_generation import DorkGenerator, DorkGeneratorError, validate_dork
 from .multilingual import MultilingualTranslator
 from .connectors import SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector
 from .extraction import EvidenceExtractor
@@ -55,8 +55,12 @@ def expand_query(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
 ) -> None:
     """Expand a query into multiple search variants across languages."""
-    expander = QueryExpander()
-    results = _run_async(expander.expand(query))
+    try:
+        expander = QueryExpander()
+        results = _run_async(expander.expand(query))
+    except QueryExpanderError as e:
+        console.print(f"[red]Query expansion failed: {e}[/red]")
+        raise typer.Exit(1)
 
     table = Table(title="Expanded Queries")
     table.add_column("Language", style="cyan")
@@ -82,8 +86,12 @@ def generate_dorks(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
 ) -> None:
     """Generate search engine dork queries from a query."""
-    generator = DorkGenerator()
-    schema = _run_async(generator.generate(query))
+    try:
+        generator = DorkGenerator()
+        schema = _run_async(generator.generate(query))
+    except DorkGeneratorError as e:
+        console.print(f"[red]Dork generation failed: {e}[/red]")
+        raise typer.Exit(1)
 
     # Validate against JSON schema
     instance = schema.model_dump()
@@ -92,6 +100,7 @@ def generate_dorks(
         console.print(f"[red]Schema validation errors:[/red]")
         for e in errors:
             console.print(f"  - {e}")
+        raise typer.Exit(1)
 
     table = Table(title=f"Dork Queries: {query}")
     table.add_column("Target", style="cyan")
@@ -99,7 +108,7 @@ def generate_dorks(
     table.add_column("Description", style="dim")
 
     for d in schema.dork_queries:
-        table.add_row(d.target, d.raw, d.description)
+        table.add_row(d.target.value, d.raw, d.description)
 
     console.print(table)
 
