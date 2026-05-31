@@ -411,12 +411,29 @@ def route_dork(
 def run_research(
     query: str = typer.Argument(..., help="Research query"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+    max_dorks: int = typer.Option(25, "--max-dorks", help="Max dork queries to execute"),
     max_results: int = typer.Option(50, "--max-results", "-n", help="Max sources to process"),
-    enrich: bool = typer.Option(False, "--enrich", help="Crawl selected URLs via Crawl4AI"),
+    max_per_connector: int = typer.Option(20, "--max-per-connector", help="Max sources per connector"),
+    enrich: bool = typer.Option(False, "--enrich", help="Crawl URLs via Crawl4AI"),
+    dedup_mode: str = typer.Option("url", "--dedup", help="Dedup mode: url, canonical_url, domain_url"),
+    min_confidence: float = typer.Option(0.0, "--min-confidence", help="Min evidence confidence (0-1)"),
+    disable_connector: Optional[list[str]] = typer.Option(None, "--disable-connector", help="Disable connector"),
+    language: Optional[list[str]] = typer.Option(None, "--language", "-l", help="Allowed language codes"),
+    archive: str = typer.Option("live_first", "--archive", help="live_first, archive_first, archive_only"),
 ) -> None:
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
     runner = ResearchRunner()
-    config = ResearchRunConfig(max_results=max_results, enrich=enrich)
+    config = ResearchRunConfig(
+        max_dorks=max_dorks,
+        max_results=max_results,
+        max_results_per_connector=max_per_connector,
+        enrich=enrich,
+        dedup_mode=dedup_mode,
+        min_evidence_confidence=min_confidence,
+        disabled_connectors=disable_connector,
+        enabled_languages=language,
+        archive_preference=archive,
+    )
     artifact = _run_async(runner.run(query, config))
 
     status_color = "[green]" if artifact.status == "completed" else "[yellow]"

@@ -49,6 +49,7 @@ class ResearchArtifact(BaseModel):
     lineages: list = Field(default_factory=list)
     evidence: Optional[dict] = None
     graph: Optional[GraphSummary] = None
+    quality_controls: Optional[dict] = None
 
     def add_error(self, msg: str) -> None:
         self.errors.append(sanitize_error_message(msg))
