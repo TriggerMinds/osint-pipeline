@@ -430,50 +430,88 @@ def run_research(
     concurrency: Optional[int] = typer.Option(None, "--concurrency", help="Max concurrent connector calls"),
     per_connector_concurrency: Optional[int] = typer.Option(None, "--per-connector-concurrency", help="Max concurrent calls per connector"),
     connector_timeout: float = typer.Option(30.0, "--connector-timeout", help="Connector timeout in seconds"),
-    profile: Optional[str] = typer.Option(None, "--profile", help="Config preset (smoke)"),
+    profile: Optional[str] = typer.Option(None, "--profile", help="Config preset: smoke, archive_first, deleted_content, multi_engine, foreign_index, deep_archive"),
     fixture_mode: bool = typer.Option(False, "--fixture", help="Use test fixtures instead of live connectors"),
     fixture_dir: Optional[Path] = typer.Option(None, "--fixture-dir", help="Fixture directory path"),
 ) -> None:
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
-    if profile == "smoke":
-        smoke_enabled = ["searxng", "gdelt", "openalex"]
-        if disable_connector:
-            enabled_connectors = [c for c in smoke_enabled if c not in disable_connector]
-        else:
-            enabled_connectors = smoke_enabled
-        required_connectors = list(enabled_connectors)
-        max_dorks = 3
-        max_results = 10
-        max_tasks_per_connector = 2
-        max_per_connector = 10
-        enrich = False
-        dedup_mode = "canonical_url"
-        min_confidence = 0.3
-        if concurrency is None:
-            concurrency = 3
-        if per_connector_concurrency is None:
-            per_connector_concurrency = 1
+    p = profile
+    _disabled = disable_connector
+
+    if p is None:
+        presets = dict(max_dorks=25, max_results=50, max_tasks=3, max_per=20,
+                       enrich=False, dedup="canonical_url", min_conf=0.0,
+                       concur=concurrency or 5, per_concur=per_connector_concurrency or 2,
+                       archive_pref=archive, enabled=None, required=None,
+                       disable=_disabled, langs=language)
+    elif p == "smoke":
+        base = ["searxng", "gdelt", "openalex"]
+        enabled = [c for c in base if c not in (_disabled or [])]
+        presets = dict(max_dorks=3, max_results=10, max_tasks=2, max_per=10,
+                       enrich=False, dedup="canonical_url", min_conf=0.3,
+                       concur=concurrency or 3, per_concur=per_connector_concurrency or 1,
+                       archive_pref="live_first", enabled=enabled, required=list(enabled),
+                       disable=None, langs=language)
+    elif p == "archive_first":
+        base_disabled = ["github", "reddit"]
+        final_disabled = list(set((_disabled or []) + base_disabled))
+        presets = dict(max_dorks=5, max_results=30, max_tasks=3, max_per=15,
+                       enrich=False, dedup="url", min_conf=0.0,
+                       concur=concurrency or 4, per_concur=per_connector_concurrency or 2,
+                       archive_pref="archive_first", enabled=None, required=None,
+                       disable=final_disabled, langs=language)
+    elif p == "deleted_content":
+        presets = dict(max_dorks=8, max_results=50, max_tasks=3, max_per=20,
+                       enrich=True, dedup="canonical_url", min_conf=0.0,
+                       concur=concurrency or 3, per_concur=per_connector_concurrency or 1,
+                       archive_pref="archive_only", enabled=None, required=None,
+                       disable=_disabled, langs=language)
+    elif p == "multi_engine":
+        presets = dict(max_dorks=12, max_results=80, max_tasks=4, max_per=20,
+                       enrich=False, dedup="canonical_url", min_conf=0.0,
+                       concur=concurrency or 5, per_concur=per_connector_concurrency or 2,
+                       archive_pref="live_first", enabled=None, required=None,
+                       disable=_disabled, langs=language)
+    elif p == "foreign_index":
+        base = ["searxng", "gdelt", "openalex", "github", "wikidata"]
+        enabled = [c for c in base if c not in (_disabled or [])]
+        presets = dict(max_dorks=10, max_results=60, max_tasks=3, max_per=15,
+                       enrich=False, dedup="canonical_url", min_conf=0.0,
+                       concur=concurrency or 4, per_concur=per_connector_concurrency or 2,
+                       archive_pref="live_first", enabled=enabled, required=list(enabled),
+                       disable=None, langs=["en", "ru", "zh", "ar", "fa", "tr"])
+    elif p == "deep_archive":
+        base = ["archive_cdx", "commoncrawl", "searxng", "openalex"]
+        enabled = [c for c in base if c not in (_disabled or [])]
+        presets = dict(max_dorks=10, max_results=80, max_tasks=4, max_per=25,
+                       enrich=True, dedup="canonical_url", min_conf=0.0,
+                       concur=concurrency or 3, per_concur=per_connector_concurrency or 1,
+                       archive_pref="archive_first", enabled=enabled, required=list(enabled),
+                       disable=None, langs=language)
+    else:
+        console.print(f"[red]Unknown profile: {profile}. Options: smoke, archive_first, deleted_content, multi_engine, foreign_index, deep_archive[/red]")
+        raise typer.Exit(1)
 
     runner = ResearchRunner()
     config = ResearchRunConfig(
-        max_dorks=max_dorks,
-        max_results=max_results,
-        max_tasks_per_connector=max_tasks_per_connector,
-        max_results_per_connector=max_per_connector,
-        enrich=enrich,
-        dedup_mode=dedup_mode,
-        min_evidence_confidence=min_confidence,
-        disabled_connectors=disable_connector if disable_connector else None,
-        enabled_connectors=enabled_connectors if profile == "smoke" else None,
-        enabled_languages=language,
-        archive_preference=archive,
-        dry_run=dry_run,
-        fixture_mode=fixture_mode or (profile == "smoke" and fixture_mode is False and False),
-        fixture_dir=str(fixture_dir) if fixture_dir else None,
-        required_connectors=required_connectors,
-        max_concurrency=concurrency or 5,
-        max_concurrency_per_connector=per_connector_concurrency or 2,
+        max_dorks=presets["max_dorks"],
+        max_results=presets["max_results"],
+        max_tasks_per_connector=presets["max_tasks"],
+        max_results_per_connector=presets["max_per"],
+        enrich=presets["enrich"],
+        dedup_mode=presets["dedup"],
+        min_evidence_confidence=presets["min_conf"],
+        disabled_connectors=presets["disable"],
+        enabled_connectors=presets["enabled"],
+        enabled_languages=presets["langs"],
+        archive_preference=presets["archive_pref"],
+        required_connectors=presets["required"],
+        max_concurrency=presets["concur"],
+        max_concurrency_per_connector=presets["per_concur"],
         connector_timeout_seconds=connector_timeout,
+        dry_run=dry_run,
+        fixture_mode=fixture_mode,
+        fixture_dir=str(fixture_dir) if fixture_dir else None,
     )
     artifact = _run_async(runner.run(query, config))
 
