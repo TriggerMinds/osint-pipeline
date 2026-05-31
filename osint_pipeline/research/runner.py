@@ -179,6 +179,8 @@ class ResearchRunner:
         if cfg.enabled_languages:
             dorks = [d for d in dorks if d.language in cfg.enabled_languages or not d.language]
 
+        per_connector_counts: dict[str, int] = {}
+
         # Inject deleted-content queries for deleted_content profile
         if cfg._profile_name == "deleted_content":
             from .strategies import build_deleted_content_queries
@@ -199,8 +201,6 @@ class ResearchRunner:
                         raw=q, target=target,
                         description=f"deleted-content strategy: {q}",
                     ))
-
-        per_connector_counts: dict[str, int] = {}
 
         for i, d in enumerate(dorks):
             try:
