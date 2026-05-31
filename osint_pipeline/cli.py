@@ -432,18 +432,18 @@ def run_research(
 ) -> None:
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
     if profile == "smoke":
+        smoke_enabled = ["searxng", "gdelt", "openalex"]
+        if disable_connector:
+            enabled_connectors = [c for c in smoke_enabled if c not in disable_connector]
+        else:
+            enabled_connectors = smoke_enabled
+        required_connectors = list(enabled_connectors)
         max_dorks = 3
         max_results = 10
         max_per_connector = 5
         enrich = False
         dedup_mode = "canonical_url"
         min_confidence = 0.3
-        base_required = ["searxng", "gdelt", "openalex"]
-        if disable_connector:
-            required_connectors = [c for c in base_required if c not in disable_connector]
-        else:
-            required_connectors = base_required
-            disable_connector = ["archive_cdx", "commoncrawl", "github", "wikidata", "reddit"]
 
     runner = ResearchRunner()
     config = ResearchRunConfig(
@@ -453,7 +453,8 @@ def run_research(
         enrich=enrich,
         dedup_mode=dedup_mode,
         min_evidence_confidence=min_confidence,
-        disabled_connectors=disable_connector,
+        disabled_connectors=disable_connector if disable_connector else None,
+        enabled_connectors=enabled_connectors if profile == "smoke" else None,
         enabled_languages=language,
         archive_preference=archive,
         dry_run=dry_run,
