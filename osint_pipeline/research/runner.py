@@ -135,9 +135,9 @@ class ResearchRunner:
 
             conn_results.append(ConnectorExecutionResult(
                 connector=route.connector,
-                query=query_for_search,
+                query=sanitize_error_message(query_for_search),
                 sources_found=len(result.sources),
-                error=result.error,
+                error=sanitize_error_message(result.error) if result.error else None,
             ))
 
         # Step 4: Deduplicate

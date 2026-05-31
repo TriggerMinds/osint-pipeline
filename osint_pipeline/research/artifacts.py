@@ -54,5 +54,10 @@ class ResearchArtifact(BaseModel):
         self.errors.append(sanitize_error_message(msg))
 
     def model_dump_safe(self) -> dict:
+        self.errors = [sanitize_error_message(e) for e in self.errors]
+        for cr in self.connector_results:
+            cr.query = sanitize_error_message(cr.query)
+            if cr.error:
+                cr.error = sanitize_error_message(cr.error)
         d = self.model_dump(exclude_none=True)
         return d
