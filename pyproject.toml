@@ -1,0 +1,26 @@
+[project]
+name = "osint-pipeline"
+version = "0.1.0"
+description = "AI-driven OSINT/research pipeline for public sources, archives, and multilingual discovery"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Kilo", email = "dev@kilo.ai"},
+]
+dependencies = [
+    "aiohttp>=3.9",
+    "openai>=1.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+osint-pipeline = "src.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
