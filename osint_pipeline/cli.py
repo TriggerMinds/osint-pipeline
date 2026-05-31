@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -27,7 +27,10 @@ from .connectors import (
 from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
 from .research.strategies import PROFILE_SEARXNG
 from .runs_manager import RunArchiver
-from .planning import rule_based_plan, refine_plan_with_llm, apply_plan_to_config, evaluate_plan_coverage
+from .planning import (
+    rule_based_plan, refine_plan_with_llm, apply_plan_to_config, evaluate_plan_coverage,
+    ResearchPlan,
+)
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -429,6 +432,53 @@ def route_dork(
 
 
 @app.command()
+def _run_and_show(config, query, output, profile, plan=None):
+    runner = ResearchRunner()
+    artifact = _run_async(runner.run(query, config))
+    if plan:
+        artifact.research_plan = plan.model_dump()
+        artifact.planner_warnings = evaluate_plan_coverage(plan, artifact.model_dump_safe())
+
+    _show_result(artifact, query, output, profile)
+
+
+def _show_result(artifact, query, output, profile):
+    status_color = "[green]" if artifact.status == "completed" else "[yellow]"
+    t = artifact.timing
+    console.print(Panel.fit(
+        f"[bold]Research Run: {artifact.run_id}[/bold]\n\n"
+        f"Query: {artifact.query}\n"
+        f"Expansions: {len(artifact.expansions)}  |  Dorks: {len(artifact.dorks)}\n"
+        f"Routes executed: {artifact.routes}  |  Sources: {artifact.sources_fetched}\n"
+        f"Claims: {artifact.claims_extracted}\n"
+        f"Graph: {artifact.graph.nodes if artifact.graph else 0} nodes, "
+        f"{artifact.graph.edges if artifact.graph else 0} edges\n"
+        f"Status: {status_color}{artifact.status}[/]\n\n"
+        f"[dim]Timing: expand {t.expand:.1f}s | dork {t.dork:.1f}s | "
+        f"fetch {t.fetch:.1f}s | extract {t.extract:.1f}s | rank {t.rank:.1f}s[/dim]",
+        title="Research Run",
+    ))
+    if artifact.errors:
+        console.print("[yellow]Errors during run:[/yellow]")
+        for e in artifact.errors:
+            console.print(f"  [dim]{e}[/dim]")
+
+    safe_data = artifact.model_dump_safe()
+    archiver = RunArchiver()
+    run_dir = archiver.archive_run(
+        query=query, artifact_data=safe_data, profile=profile,
+        timing=safe_data.get("timing"),
+        errors=artifact.errors if artifact.errors else None,
+    )
+    if output:
+        output.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        console.print(f"[green]Results written to {output}[/green]")
+    console.print(f"[dim]Archived: {run_dir}[/dim]")
+    if artifact.errors:
+        raise typer.Exit(1)
+
+
+@app.command()
 def run_research(
     query: str = typer.Argument(..., help="Research query"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
@@ -460,13 +510,21 @@ def run_research(
         plan = rule_based_plan(query)
         plan = _run_async(refine_plan_with_llm(query, plan))
         cfg_auto = apply_plan_to_config(plan)
-        p = cfg_auto._profile_name
-        _disabled = cfg_auto.disabled_connectors
-        # Use plan values unless CLI explicitly overrode
-        if not profile and not disable_connector and not language:
-            profile = p
-            disable_connector = cfg_auto.disabled_connectors
-            language = cfg_auto.enabled_languages
+        if disable_connector:
+            cfg_auto.disabled_connectors = list(set((cfg_auto.disabled_connectors or []) + disable_connector))
+        if language:
+            cfg_auto.enabled_languages = language
+        if dry_run:
+            cfg_auto.dry_run = True
+        if fixture_mode:
+            cfg_auto.fixture_mode = True
+        if fixture_dir:
+            cfg_auto.fixture_dir = str(fixture_dir)
+        cfg_auto.connector_timeout_seconds = connector_timeout
+        cfg_auto.max_concurrency = concurrency or 5
+        cfg_auto.max_concurrency_per_connector = per_connector_concurrency or 2
+        _run_and_show(cfg_auto, query, output, profile, plan)
+        return
 
     if p is None:
         presets = dict(max_dorks=25, max_results=50, max_tasks=3, max_per=20,
@@ -546,52 +604,7 @@ def run_research(
         fixture_mode=fixture_mode,
         fixture_dir=str(fixture_dir) if fixture_dir else None,
     )
-    artifact = _run_async(runner.run(query, config))
-
-    if auto_plan and plan:
-        artifact.research_plan = plan.model_dump()
-        artifact.planner_warnings = evaluate_plan_coverage(plan, artifact.model_dump_safe())
-
-    status_color = "[green]" if artifact.status == "completed" else "[yellow]"
-    t = artifact.timing
-
-    console.print(Panel.fit(
-        f"[bold]Research Run: {artifact.run_id}[/bold]\n\n"
-        f"Query: {artifact.query}\n"
-        f"Expansions: {len(artifact.expansions)}  |  Dorks: {len(artifact.dorks)}\n"
-        f"Routes executed: {artifact.routes}  |  Sources: {artifact.sources_fetched}\n"
-        f"Claims: {artifact.claims_extracted}\n"
-        f"Graph: {artifact.graph.nodes if artifact.graph else 0} nodes, "
-        f"{artifact.graph.edges if artifact.graph else 0} edges\n"
-        f"Status: {status_color}{artifact.status}[/]\n\n"
-        f"[dim]Timing: expand {t.expand:.1f}s | dork {t.dork:.1f}s | "
-        f"fetch {t.fetch:.1f}s | extract {t.extract:.1f}s | rank {t.rank:.1f}s[/dim]",
-        title="Research Run",
-    ))
-
-    if artifact.errors:
-        console.print("[yellow]Errors during run:[/yellow]")
-        for e in artifact.errors:
-            console.print(f"  [dim]{e}[/dim]")
-
-    safe_data = artifact.model_dump_safe()
-    archiver = RunArchiver()
-    run_dir = archiver.archive_run(
-        query=query,
-        artifact_data=safe_data,
-        profile=profile,
-        timing=safe_data.get("timing"),
-        errors=artifact.errors if artifact.errors else None,
-    )
-
-    if output:
-        output.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-        console.print(f"[green]Results written to {output}[/green]")
-
-    console.print(f"[dim]Archived: {run_dir}[/dim]")
-
-    if artifact.errors:
-        raise typer.Exit(1)
+    _run_and_show(config, query, output, profile)
 
 
 @app.command()
