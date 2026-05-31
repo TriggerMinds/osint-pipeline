@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {
+      "metadata": {
+        "url": "https://doi.org/10.1234/hydrogen-storage",
+        "source_type": "openalex",
+        "language": "en",
+        "discovered_by_query": "hydrogen storage netherlands",
+        "title": "Hydrogen Storage Technologies: A Review",
+        "domain": "doi.org"
+      },
+      "content": "This paper reviews hydrogen storage technologies including cavern storage, metal hydrides, and liquid organic hydrogen carriers."
+    }
+  ]
+}

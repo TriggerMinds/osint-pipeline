@@ -47,6 +47,7 @@ class ResearchArtifact(BaseModel):
     claims_extracted: int = 0
     errors: list[str] = Field(default_factory=list)
     lineages: list = Field(default_factory=list)
+    dry_run: bool = False
     evidence: Optional[dict] = None
     graph: Optional[GraphSummary] = None
     quality_controls: Optional[dict] = None

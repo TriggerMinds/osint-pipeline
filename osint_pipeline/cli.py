@@ -22,7 +22,7 @@ from .connectors import (
     SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector,
     OpenAlexConnector, GitHubSearchConnector, WikidataConnector, RedditConnector,
 )
-from .research import ResearchRunner, ResearchRunConfig
+from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -420,8 +420,22 @@ def run_research(
     disable_connector: Optional[list[str]] = typer.Option(None, "--disable-connector", help="Disable connector"),
     language: Optional[list[str]] = typer.Option(None, "--language", "-l", help="Allowed language codes"),
     archive: str = typer.Option("live_first", "--archive", help="live_first, archive_first, archive_only"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Expand+dork+route only, no connector calls"),
+    profile: Optional[str] = typer.Option(None, "--profile", help="Config preset (smoke)"),
+    fixture_mode: bool = typer.Option(False, "--fixture", help="Use test fixtures instead of live connectors"),
+    fixture_dir: Optional[Path] = typer.Option(None, "--fixture-dir", help="Fixture directory path"),
 ) -> None:
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
+    if profile == "smoke":
+        max_dorks = 3
+        max_results = 10
+        max_per_connector = 5
+        enrich = False
+        dedup_mode = "canonical_url"
+        min_confidence = 0.3
+        if not disable_connector:
+            disable_connector = ["archive_cdx", "commoncrawl", "github", "wikidata", "reddit"]
+
     runner = ResearchRunner()
     config = ResearchRunConfig(
         max_dorks=max_dorks,
@@ -433,6 +447,9 @@ def run_research(
         disabled_connectors=disable_connector,
         enabled_languages=language,
         archive_preference=archive,
+        dry_run=dry_run,
+        fixture_mode=fixture_mode or (profile == "smoke" and fixture_mode is False and False),
+        fixture_dir=str(fixture_dir) if fixture_dir else None,
     )
     artifact = _run_async(runner.run(query, config))
 
@@ -500,6 +517,85 @@ def export_graph(
         raise typer.Exit(1)
 
     console.print(f"[green]Graph exported to {out_path} ({len(graph.nodes)} nodes, {len(graph.edges)} edges)[/green]")
+
+
+@app.command()
+def validate_artifact(
+    artifact_file: Path = typer.Argument(..., help="Research artifact JSON file"),
+) -> None:
+    """Validate a research artifact for schema compliance and secrets."""
+    import re
+
+    data = json.loads(artifact_file.read_text(encoding="utf-8"))
+    errors: list[str] = []
+
+    # Pydantic schema validation
+    try:
+        artifact = ResearchArtifact(**data)
+        artifact.model_dump_safe()
+    except Exception as e:
+        errors.append(f"Pydantic validation failed: {e}")
+
+    if errors:
+        for e in errors:
+            console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    # Structural checks
+    if not artifact.run_id:
+        errors.append("Missing run_id")
+    if artifact.dry_run:
+        pass  # dry-run artifacts have no sources/evidence
+    else:
+        if artifact.sources_fetched > 0:
+            # Check lineage attached to sources via connector_results
+            if not artifact.connector_results:
+                errors.append("connector_results missing")
+
+    if not artifact.lineages:
+        errors.append("Missing lineages (empty lineage list)")
+    else:
+        for li in artifact.lineages:
+            li_data = li if isinstance(li, dict) else li.model_dump()
+            if not li_data.get("connector"):
+                errors.append(f"lineage {li_data.get('id', '?')} missing connector")
+
+    if artifact.graph is None:
+        errors.append("Missing graph summary")
+
+    if artifact.quality_controls is None:
+        errors.append("Missing quality_controls")
+
+    if artifact.timing is None:
+        errors.append("Missing timing")
+
+    # Secret detection via raw JSON text
+    raw = artifact_file.read_text()
+    secret_patterns = [
+        r"sk-[a-zA-Z0-9_-]{10,}",
+        r"gh[ps]_[a-zA-Z0-9]{10,}",
+        r"Authorization: Bearer \S+",
+    ]
+    for pat in secret_patterns:
+        if re.search(pat, raw):
+            errors.append(f"Secret pattern detected in artifact: {pat}")
+
+    if errors:
+        console.print("[red]Artifact validation failed:[/red]")
+        for e in errors:
+            console.print(f"  [red]- {e}[/red]")
+        raise typer.Exit(1)
+
+    t = artifact.timing
+    console.print("[green]Artifact validation passed[/green]")
+    console.print(Panel.fit(
+        f"Run: {artifact.run_id}\n"
+        f"Status: {artifact.status}\n"
+        f"Sources: {artifact.sources_fetched}  |  Claims: {artifact.claims_extracted}\n"
+        f"Graph: {artifact.graph.nodes if artifact.graph else 0}n / {artifact.graph.edges if artifact.graph else 0}e\n"
+        f"Timing: {t.total:.1f}s  |  Dry-run: {artifact.dry_run}",
+        title="Artifact Summary",
+    ))
 
 
 if __name__ == "__main__":

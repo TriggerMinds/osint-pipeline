@@ -43,6 +43,9 @@ class ResearchRunConfig:
     crawl_enrichment_policy: str = "missing_content"  # none, missing_content, top_ranked
     archive_preference: str = "live_first"  # live_first, archive_first, archive_only
     source_score_threshold: float = 0.0
+    dry_run: bool = False
+    fixture_mode: bool = False
+    fixture_dir: Optional[str] = None
 
 
 _ALL_CONNECTORS = [
@@ -182,14 +185,31 @@ class ResearchRunner:
             lineages.append(li)
 
             query_for_search = d.raw or d.description or query
-            try:
-                result = await conn.search(query_for_search, language=d.language or "en")  # type: ignore
-            except Exception as exc:
-                artifact.add_error(f"dork[{i}] ({route.connector}): {type(exc).__name__}: {exc}")
+
+            # Dry-run: skip all connector calls
+            if cfg.dry_run:
+                conn_results.append(ConnectorExecutionResult(
+                    connector=route.connector,
+                    query=sanitize_error_message(query_for_search),
+                    sources_found=0,
+                ))
                 continue
 
-            if result.error:
-                artifact.add_error(f"dork[{i}] ({route.connector}): {result.error}")
+            # Fixture mode: load from file instead of calling connector
+            if cfg.fixture_mode:
+                result = await self._load_fixture(cfg, route.connector, query_for_search)
+                if result is None:
+                    artifact.add_error(f"dork[{i}] ({route.connector}): no fixture found")
+                    continue
+            else:
+                try:
+                    result = await conn.search(query_for_search, language=d.language or "en")  # type: ignore
+                except Exception as exc:
+                    artifact.add_error(f"dork[{i}] ({route.connector}): {type(exc).__name__}: {exc}")
+                    continue
+
+                if result.error:
+                    artifact.add_error(f"dork[{i}] ({route.connector}): {result.error}")
 
             # Cap sources per connector
             results_for_connector = result.sources[:cfg.max_results_per_connector]
@@ -224,9 +244,11 @@ class ResearchRunner:
 
         all_sources = all_sources[:cfg.max_results]
 
-        # Step 6: Crawl enrichment
+        # Step 6: Crawl enrichment (skipped in dry_run)
         t0 = time.time()
-        if cfg.enrich:
+        if cfg.dry_run:
+            pass  # skip crawl in dry-run
+        elif cfg.enrich:
             crawl_adapter = Crawl4AIAdapter()
             if crawl_adapter.available:
                 proxy = self.settings.proxy_url or None
@@ -246,21 +268,24 @@ class ResearchRunner:
                         artifact.add_error(f"crawl enrichment: {type(exc).__name__}: {exc}")
         timing.crawl = time.time() - t0
 
-        # Step 7: Extract evidence
+        # Step 7: Extract evidence (skipped in dry_run)
         t0 = time.time()
-        try:
-            extractor = EvidenceExtractor()
-            evidence = await extractor.extract(all_sources)
-        except (EvidenceExtractorError, Exception) as exc:
-            artifact.add_error(f"evidence extraction: {type(exc).__name__}: {exc}")
+        if cfg.dry_run:
             evidence = EvidenceCollection(query=query)
+        else:
+            try:
+                extractor = EvidenceExtractor()
+                evidence = await extractor.extract(all_sources)
+            except (EvidenceExtractorError, Exception) as exc:
+                artifact.add_error(f"evidence extraction: {type(exc).__name__}: {exc}")
+                evidence = EvidenceCollection(query=query)
         timing.extract = time.time() - t0
 
         # Step 8: Rank + filter evidence
         t0 = time.time()
         ranker = EvidenceRanker()
         evidence = ranker.rank(evidence)
-        if cfg.min_evidence_confidence > 0:
+        if not cfg.dry_run and cfg.min_evidence_confidence > 0:
             evidence = _filter_by_confidence(evidence, cfg.min_evidence_confidence)
         timing.rank = time.time() - t0
 
@@ -287,7 +312,10 @@ class ResearchRunner:
             ],
         }
         artifact.graph = GraphSummary(nodes=len(graph.nodes), edges=len(graph.edges))
+        artifact.dry_run = cfg.dry_run
         artifact.quality_controls = {
+            "dry_run": cfg.dry_run,
+            "fixture_mode": cfg.fixture_mode,
             "max_dorks": cfg.max_dorks,
             "max_results": cfg.max_results,
             "max_results_per_connector": cfg.max_results_per_connector,
@@ -306,6 +334,40 @@ class ResearchRunner:
         run_model.total_sources = artifact.sources_fetched
 
         return artifact
+
+    async def _load_fixture(self, cfg: ResearchRunConfig, connector: str, query: str) -> object | None:
+        import json
+        from pathlib import Path
+        from ..connectors.base import ConnectorResult
+
+        fixture_dir = Path(cfg.fixture_dir or "tests/fixtures/connectors")
+        # Map query to a fixture filename: searxng + query → searxng_hydrogen.json
+        safe_query = query.replace(" ", "_")[:30]
+        name = f"{connector}_{safe_query}.json"
+        fixture_path = fixture_dir / name
+        if not fixture_path.exists():
+            # Try a generic fallback: connector.json
+            fixture_path = fixture_dir / f"{connector}.json"
+            if not fixture_path.exists():
+                return None
+        try:
+            data = json.loads(fixture_path.read_text(encoding="utf-8"))
+            sources = []
+            for s in data.get("sources", []):
+                meta = s.get("metadata", {})
+                from ..models.source import SourceMetadata, SourceResult, SourceType, FetchStatus
+                sm = SourceMetadata(
+                    url=meta.get("url", ""),
+                    source_type=SourceType(meta["source_type"]) if "source_type" in meta else SourceType.SEARXNG,
+                    language=meta.get("language", "en"),
+                    discovered_by_query=meta.get("discovered_by_query", query),
+                    title=meta.get("title"),
+                    domain=meta.get("domain"),
+                )
+                sources.append(SourceResult(metadata=sm, content=s.get("content")))
+            return ConnectorResult(sources=sources)
+        except Exception:
+            return None
 
     @staticmethod
     def _score_source(src: SourceResult) -> float:
