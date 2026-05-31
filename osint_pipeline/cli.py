@@ -15,6 +15,7 @@ from .query_expansion import QueryExpander, QueryExpanderError
 from .dork_generation import DorkGenerator, DorkGeneratorError, validate_dork
 from .multilingual import MultilingualTranslator
 from .runtime.checks import RuntimeChecker, mask_proxy_url
+from .research import sanitize_error_message
 from .router import RouterError, SourceRouter
 from .graphrag import EvidenceGraphExporter
 from .models.dork import DorkQuery, DorkSchema
@@ -426,6 +427,9 @@ def run_research(
     language: Optional[list[str]] = typer.Option(None, "--language", "-l", help="Allowed language codes"),
     archive: str = typer.Option("live_first", "--archive", help="live_first, archive_first, archive_only"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Expand+dork+route only, no connector calls"),
+    concurrency: Optional[int] = typer.Option(None, "--concurrency", help="Max concurrent connector calls"),
+    per_connector_concurrency: Optional[int] = typer.Option(None, "--per-connector-concurrency", help="Max concurrent calls per connector"),
+    connector_timeout: float = typer.Option(30.0, "--connector-timeout", help="Connector timeout in seconds"),
     profile: Optional[str] = typer.Option(None, "--profile", help="Config preset (smoke)"),
     fixture_mode: bool = typer.Option(False, "--fixture", help="Use test fixtures instead of live connectors"),
     fixture_dir: Optional[Path] = typer.Option(None, "--fixture-dir", help="Fixture directory path"),
@@ -444,6 +448,10 @@ def run_research(
         enrich = False
         dedup_mode = "canonical_url"
         min_confidence = 0.3
+        if concurrency is None:
+            concurrency = 3
+        if per_connector_concurrency is None:
+            per_connector_concurrency = 1
 
     runner = ResearchRunner()
     config = ResearchRunConfig(
@@ -461,6 +469,9 @@ def run_research(
         fixture_mode=fixture_mode or (profile == "smoke" and fixture_mode is False and False),
         fixture_dir=str(fixture_dir) if fixture_dir else None,
         required_connectors=required_connectors,
+        max_concurrency=concurrency or 5,
+        max_concurrency_per_connector=per_connector_concurrency or 2,
+        connector_timeout_seconds=connector_timeout,
     )
     artifact = _run_async(runner.run(query, config))
 
@@ -607,6 +618,100 @@ def validate_artifact(
         f"Timing: {t.total:.1f}s  |  Dry-run: {artifact.dry_run}",
         title="Artifact Summary",
     ))
+
+
+@app.command()
+def proxy_check(
+    compare_direct: bool = typer.Option(False, "--compare-direct", help="Also show direct (non-proxied) IP"),
+) -> None:
+    """Check proxy connectivity and DNS behavior."""
+    import httpx
+
+    settings = get_settings()
+    proxy_url = settings.proxy_url
+    warnings: list[str] = []
+    info: dict[str, object] = {}
+
+    info["proxy_configured"] = bool(proxy_url)
+    info["masked_proxy_url"] = mask_proxy_url(proxy_url) if proxy_url else "(none)"
+
+    if proxy_url:
+        if proxy_url.startswith("socks5://"):
+            warnings.append(
+                "SOCKS proxy configured as socks5://. Remote DNS behavior is library-dependent. "
+                "Use proxy-check to verify routing. "
+                "Prefer socks5h:// only if supported by your httpx/socksio stack."
+            )
+        elif proxy_url.startswith("socks5h://") or proxy_url.startswith("socks4://"):
+            pass  # no special warning needed
+
+        # Check socksio library
+        socks_ok = False
+        try:
+            import socksio  # noqa: F401
+            socks_ok = True
+        except ImportError:
+            pass
+        try:
+            import httpx_socks  # noqa: F401
+            socks_ok = True
+        except ImportError:
+            pass
+        info["socks_library_available"] = socks_ok
+        if not socks_ok and ("socks" in proxy_url):
+            warnings.append(
+                "SOCKS proxy configured but socksio/httpx-socks not installed. "
+                "Run: pip install 'osint-pipeline[proxy]'"
+            )
+
+        # Test proxied IP
+        try:
+            transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
+            async def _check():
+                async with httpx.AsyncClient(transport=transport, timeout=10) as c:
+                    r = await c.get("https://api.ipify.org?format=json")
+                    return r.json().get("ip", "unknown")
+            import asyncio
+            proxied_ip = asyncio.run(_check())
+            info["proxy_route_verified"] = True
+            info["proxied_ip"] = proxied_ip
+        except Exception as exc:
+            info["proxy_route_verified"] = False
+            safe_err = sanitize_error_message(str(exc))
+            warnings.append(f"Proxy route verification failed: {safe_err}")
+
+        if compare_direct:
+            try:
+                async def _direct():
+                    async with httpx.AsyncClient(timeout=10) as c:
+                        r = await c.get("https://api.ipify.org?format=json")
+                        return r.json().get("ip", "unknown")
+                import asyncio
+                direct_ip = asyncio.run(_direct())
+                info["direct_ip"] = direct_ip
+            except Exception as exc:
+                info["direct_ip"] = "unreachable"
+                warnings.append(f"Direct route unreachable: {sanitize_error_message(str(exc))}")
+
+    table = Table(title="Proxy Diagnostics")
+    table.add_column("Check", style="cyan")
+    table.add_column("Value", style="white")
+
+    for k, v in info.items():
+        pretty_key = k.replace("_", " ").title()
+        val_str = str(v)
+        if isinstance(v, bool):
+            val_str = "[green]yes[/green]" if v else "[red]no[/red]"
+        table.add_row(pretty_key, val_str)
+
+    console.print(table)
+
+    if warnings:
+        for w in warnings:
+            console.print(f"[yellow]Warning: {w}[/yellow]")
+
+    if not info.get("proxy_route_verified", False) and proxy_url:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

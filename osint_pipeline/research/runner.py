@@ -25,6 +25,7 @@ from ..models.evidence import EvidenceCollection, EvidenceClaim
 from ..models.dork import DorkQuery, DorkTarget
 from .artifacts import ResearchArtifact, ConnectorExecutionResult, TimingBreakdown, GraphSummary
 from .sanitize import sanitize_error_message
+from .executor import AsyncConnectorExecutor, ConnectorExecutionConfig, ConnectorTask, ConnectorTaskResult
 
 _TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|_ga|_gl)", re.IGNORECASE)
 
@@ -48,6 +49,9 @@ class ResearchRunConfig:
     fixture_mode: bool = False
     fixture_dir: Optional[str] = None
     required_connectors: Optional[list[str]] = None
+    max_concurrency: int = 5
+    max_concurrency_per_connector: int = 2
+    connector_timeout_seconds: float = 30.0
 
 
 _ALL_CONNECTORS = [
@@ -155,19 +159,20 @@ class ResearchRunner:
                 schema = None
         timing.dork = time.time() - t0
 
-        # Step 3: Route & execute
+        # Step 3: Route & build task list
         t0 = time.time()
         router = SourceRouter()
         all_sources: list[SourceResult] = []
         lineages: list[QueryLineage] = []
         conn_results: list[ConnectorExecutionResult] = []
-        per_connector_counts: dict[str, int] = {}
+        executor_tasks: list[ConnectorTask] = []
 
         dorks = (schema.dork_queries if schema else [])[:cfg.max_dorks]
 
-        # Filter dorks by language if enabled_languages set
         if cfg.enabled_languages:
             dorks = [d for d in dorks if d.language in cfg.enabled_languages or not d.language]
+
+        per_connector_counts: dict[str, int] = {}
 
         for i, d in enumerate(dorks):
             try:
@@ -175,69 +180,54 @@ class ResearchRunner:
             except RouterError as e:
                 artifact.add_error(f"dork[{i}]: {e}")
                 continue
-
             if route.connector not in enabled_set:
                 continue
-
-            # Per-connector limit
-            conn_count = per_connector_counts.get(route.connector, 0)
-            if conn_count >= cfg.max_results_per_connector:
+            cc = per_connector_counts.get(route.connector, 0)
+            if cc >= cfg.max_results_per_connector:
                 continue
-
-            conn = _get_connector(route.connector)
-            if conn is None:
+            _c = _get_connector(route.connector)
+            if _c is None:
                 artifact.add_error(f"dork[{i}]: no connector for '{route.connector}'")
                 continue
 
             li = router.build_lineage(d, route, lineage_id=f"l_{i:03d}", original_query=query)
             lineages.append(li)
+            per_connector_counts[route.connector] = cc + 1
 
             query_for_search = d.raw or d.description or query
 
-            # Dry-run: skip all connector calls
             if cfg.dry_run:
                 conn_results.append(ConnectorExecutionResult(
-                    connector=route.connector,
-                    query=sanitize_error_message(query_for_search),
-                    sources_found=0,
+                    connector=route.connector, query=sanitize_error_message(query_for_search), sources_found=0,
                 ))
                 continue
 
-            # Fixture mode: load from file instead of calling connector
             if cfg.fixture_mode:
-                result = await self._load_fixture(cfg, route.connector, query_for_search)
-                if result is None:
+                fixture_r = await self._load_fixture(cfg, route.connector, query_for_search)
+                if fixture_r is None:
                     artifact.add_error(f"dork[{i}] ({route.connector}): no fixture found")
                     continue
-            else:
-                try:
-                    result = await conn.search(query_for_search, language=d.language or "en")  # type: ignore
-                except Exception as exc:
-                    artifact.add_error(f"dork[{i}] ({route.connector}): {type(exc).__name__}: {exc}")
-                    continue
+                for src in fixture_r.sources[:cfg.max_results_per_connector]:
+                    src.metadata.run_id = run_id
+                    src.metadata.query_lineage_id = li.id
+                    src.metadata.discovered_by_query = query_for_search
+                all_sources.extend(fixture_r.sources[:cfg.max_results_per_connector])
+                conn_results.append(ConnectorExecutionResult(
+                    connector=route.connector, query=sanitize_error_message(query_for_search),
+                    sources_found=min(len(fixture_r.sources), cfg.max_results_per_connector),
+                    error=sanitize_error_message(fixture_r.error) if fixture_r.error else None,
+                ))
+                continue
 
-                if result.error:
-                    artifact.add_error(f"dork[{i}] ({route.connector}): {result.error}")
-
-            # Cap sources per connector
-            results_for_connector = result.sources[:cfg.max_results_per_connector]
-            per_connector_counts[route.connector] = conn_count + len(results_for_connector)
-
-            for src in results_for_connector:
-                src.metadata.run_id = run_id
-                src.metadata.query_lineage_id = li.id
-                src.metadata.discovered_by_query = query_for_search
-
-            all_sources.extend(results_for_connector)
-
-            conn_results.append(ConnectorExecutionResult(
+            executor_tasks.append(ConnectorTask(
                 connector=route.connector,
-                query=sanitize_error_message(query_for_search),
-                sources_found=len(results_for_connector),
-                error=sanitize_error_message(result.error) if result.error else None,
+                query=query_for_search,
+                language=d.language or "en",
+                lineage_id=li.id,
+                run_id=run_id,
             ))
 
-        # Synthetic dork injection for required connectors
+        # Synthetic required-connector dorks
         synthetic_added = 0
         required_active = []
         if cfg.required_connectors and enabled_set:
@@ -245,59 +235,71 @@ class ResearchRunner:
                 if req_name not in enabled_set:
                     continue
                 required_active.append(req_name)
-                has_dork = any(cr.connector == req_name for cr in conn_results)
-                if has_dork:
+                has_real = any(
+                    not getattr(t, "synthetic", False) and t.connector == req_name
+                    for t in executor_tasks
+                )
+                if has_real:
                     continue
-                conn_synthetic = _get_connector(req_name)
-                if conn_synthetic is None:
+                _cs = _get_connector(req_name)
+                if _cs is None:
                     continue
                 synthetic_added += 1
 
-                li_synth = QueryLineage(
-                    id=f"l_required_{req_name}",
-                    original_query=query,
-                    expanded_query=f"required connector: {req_name}",
-                    language="en",
-                    connector=req_name,
-                    dork_raw=query,
-                    dork_target=req_name,
+                li_s = QueryLineage(
+                    id=f"l_required_{req_name}", original_query=query,
+                    expanded_query=f"required connector: {req_name}", language="en",
+                    connector=req_name, dork_raw=query, dork_target=req_name,
                 )
-                lineages.append(li_synth)
+                lineages.append(li_s)
 
-                query_for_search = query
                 if cfg.dry_run:
                     conn_results.append(ConnectorExecutionResult(
-                        connector=req_name, query=query_for_search, sources_found=0,
+                        connector=req_name, query=query, sources_found=0,
+                    ))
+                    continue
+                if cfg.fixture_mode:
+                    fx = await self._load_fixture(cfg, req_name, query)
+                    if fx is None:
+                        artifact.add_error(f"required {req_name}: no fixture found")
+                        continue
+                    for src in fx.sources[:cfg.max_results_per_connector]:
+                        src.metadata.run_id = run_id
+                        src.metadata.query_lineage_id = li_s.id
+                        src.metadata.discovered_by_query = query
+                    all_sources.extend(fx.sources[:cfg.max_results_per_connector])
+                    conn_results.append(ConnectorExecutionResult(
+                        connector=req_name, query=query,
+                        sources_found=min(len(fx.sources), cfg.max_results_per_connector),
                     ))
                     continue
 
-                if cfg.fixture_mode:
-                    fixture_result = await self._load_fixture(cfg, req_name, query_for_search)
-                    if fixture_result is None:
-                        artifact.add_error(f"required {req_name}: no fixture found")
-                        continue
-                    result_obj = fixture_result
-                else:
-                    try:
-                        result_obj = await conn_synthetic.search(query_for_search)  # type: ignore
-                    except Exception as exc:
-                        artifact.add_error(f"required {req_name}: {type(exc).__name__}: {exc}")
-                        continue
-                    if result_obj.error:
-                        artifact.add_error(f"required {req_name}: {result_obj.error}")
-
-                results_synth = result_obj.sources[:cfg.max_results_per_connector]
-                for src in results_synth:
-                    src.metadata.run_id = run_id
-                    src.metadata.query_lineage_id = li_synth.id
-                    src.metadata.discovered_by_query = query_for_search
-                all_sources.extend(results_synth)
-                conn_results.append(ConnectorExecutionResult(
-                    connector=req_name,
-                    query=sanitize_error_message(query_for_search),
-                    sources_found=len(results_synth),
-                    error=sanitize_error_message(result_obj.error) if result_obj.error else None,
+                executor_tasks.append(ConnectorTask(
+                    connector=req_name, query=query, language="en",
+                    lineage_id=li_s.id, run_id=run_id, synthetic=True,
                 ))
+
+        # Execute all live connector tasks in parallel
+        if executor_tasks:
+            exec_config = ConnectorExecutionConfig(
+                max_concurrency=cfg.max_concurrency,
+                max_concurrency_per_connector=cfg.max_concurrency_per_connector,
+                timeout_seconds=cfg.connector_timeout_seconds,
+            )
+            executor = AsyncConnectorExecutor(exec_config)
+            task_results = await executor.execute_batch(executor_tasks, _CONNECTOR_INSTANCES or {})
+
+            for tr in task_results:
+                capped = tr.sources[:cfg.max_results_per_connector]
+                all_sources.extend(capped)
+                conn_results.append(ConnectorExecutionResult(
+                    connector=tr.connector,
+                    query=tr.query,
+                    sources_found=len(capped),
+                    error=tr.error,
+                ))
+                if tr.error:
+                    artifact.add_error(f"{tr.connector}: {tr.error}")
 
         # Coverage tracking
         covered = list({cr.connector for cr in conn_results})
@@ -408,6 +410,9 @@ class ResearchRunner:
             "archive_preference": cfg.archive_preference,
             "source_score_threshold": cfg.source_score_threshold,
             "required_connectors": cfg.required_connectors,
+            "max_concurrency": cfg.max_concurrency,
+            "max_concurrency_per_connector": cfg.max_concurrency_per_connector,
+            "connector_timeout_seconds": cfg.connector_timeout_seconds,
         }
 
         artifact.errors = [sanitize_error_message(e) for e in artifact.errors]
