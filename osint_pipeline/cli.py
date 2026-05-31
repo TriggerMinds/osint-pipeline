@@ -17,7 +17,7 @@ from .multilingual import MultilingualTranslator
 from .connectors import SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector
 from .extraction import EvidenceExtractor
 from .ranking import EvidenceRanker
-from .runtime.checks import RuntimeChecker
+from .runtime.checks import RuntimeChecker, mask_proxy_url
 from .crawler import Crawl4AIAdapter
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
@@ -40,7 +40,6 @@ def init(
         from pydantic_settings import SettingsConfigDict
         console.print(f"[green]Loaded config from {env_file}[/green]")
 
-    from .runtime.checks import RuntimeChecker
     checker = RuntimeChecker()
     env = checker.check_all()
 
@@ -322,7 +321,7 @@ def browser_check() -> None:
             console.print("[yellow]Playwright not installed. Run: pip install osint-pipeline[browser][/yellow]")
 
     if settings.proxy_url:
-        console.print(f"[dim]Proxy: {settings.proxy_url}[/dim]")
+        console.print(f"[dim]Proxy: {mask_proxy_url(settings.proxy_url)}[/dim]")
 
 
 @app.command()

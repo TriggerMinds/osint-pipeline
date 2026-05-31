@@ -79,14 +79,27 @@ class RuntimeChecker:
 
     @staticmethod
     def _mask_proxy(url: str) -> str:
-        if not url:
-            return "(none)"
-        # Show scheme and host, mask credentials
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            if parsed.password:
-                return f"{parsed.scheme}://{parsed.username}:***@{parsed.hostname}:{parsed.port or ''}"
-            return url
-        except Exception:
-            return "(invalid)"
+        return mask_proxy_url(url)
+
+
+def mask_proxy_url(url: str) -> str:
+    """Mask credentials in a proxy URL so they never leak to CLI output.
+
+    >>> mask_proxy_url("socks5://user:pass@127.0.0.1:1080")
+    'socks5://***:***@127.0.0.1:1080'
+    >>> mask_proxy_url("socks5://127.0.0.1:1080")
+    'socks5://127.0.0.1:1080'
+    >>> mask_proxy_url("")
+    '(none)'
+    """
+    if not url:
+        return "(none)"
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        netloc = parsed.netloc  # user:pass@host:port
+        if "@" in netloc:
+            return f"{parsed.scheme}://***:***@{parsed.hostname}:{parsed.port or ''}"
+        return url
+    except Exception:
+        return "(invalid)"
