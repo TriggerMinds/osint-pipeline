@@ -453,7 +453,7 @@ def run_research(
     from .dork_generation import DorkGenerator
     from .models.lineage import ResearchRun, QueryLineage
     from .models.evidence import EvidenceCollection
-    from .extraction import EvidenceExtractor
+    from .extraction import EvidenceExtractor, EvidenceExtractorError
     from .ranking import EvidenceRanker
     from .graphrag import EvidenceGraphBuilder, EvidenceGraphExporter
     from datetime import datetime, timezone
@@ -487,17 +487,21 @@ def run_research(
     router = SourceRouter()
     all_sources: list[SourceResult] = []
     lineages: list[QueryLineage] = []
+    errors: list[str] = []
+    connector_results: list[dict] = []
 
     for i, d in enumerate(schema.dork_queries[:max_results]):
         try:
             route = router.route(d)
         except RouterError as e:
-            console.print(f"[yellow]Skipping dork {i}: {e}[/yellow]")
+            msg = f"dork[{i}]: {e}"
+            errors.append(msg)
             continue
 
         conn = _get_connector(route.connector)
         if conn is None:
-            console.print(f"[yellow]No connector for: {route.connector}[/yellow]")
+            msg = f"dork[{i}]: no connector for '{route.connector}'"
+            errors.append(msg)
             continue
 
         li = router.build_lineage(
@@ -508,7 +512,15 @@ def run_research(
         lineages.append(li)
 
         query_for_search = d.raw or d.description or query
-        result = _run_async(conn.search(query_for_search, language=d.language or "en"))
+        try:
+            result = _run_async(conn.search(query_for_search, language=d.language or "en"))
+        except Exception as exc:
+            msg = f"dork[{i}] ({route.connector}): {type(exc).__name__}: {exc}"
+            errors.append(msg)
+            continue
+
+        if result.error:
+            errors.append(f"dork[{i}] ({route.connector}): {result.error}")
 
         for src in result.sources:
             src.metadata.run_id = run_id
@@ -516,6 +528,13 @@ def run_research(
             src.metadata.discovered_by_query = query_for_search
 
         all_sources.extend(result.sources)
+
+        connector_results.append({
+            "connector": route.connector,
+            "query": query_for_search,
+            "sources_found": len(result.sources),
+            "error": result.error,
+        })
 
     # Step 4: Deduplicate
     all_sources = _dedup_sources(all_sources)
@@ -540,8 +559,13 @@ def run_research(
 
     # Step 6: Extract evidence
     t0 = time.time()
-    extractor = EvidenceExtractor()
-    evidence = _run_async(extractor.extract(all_sources))
+    try:
+        extractor = EvidenceExtractor()
+        evidence = _run_async(extractor.extract(all_sources))
+    except (EvidenceExtractorError, Exception) as exc:
+        errors.append(f"evidence extraction: {type(exc).__name__}: {exc}")
+        from .models.evidence import EvidenceCollection
+        evidence = EvidenceCollection(query=query)
     t_extract = time.time() - t0
 
     # Step 7: Rank
@@ -554,7 +578,7 @@ def run_research(
     graph_builder = EvidenceGraphBuilder()
     graph = graph_builder.build(evidence, lineage=lineages)
 
-    run.status = "completed"
+    run.status = "completed_with_errors" if errors else "completed"
 
     # Build result dict
     result_dict = {
@@ -570,11 +594,13 @@ def run_research(
             "rank": round(t_rank, 2),
             "total": round(t_expand + t_dork + t_fetch + t_crawl + t_extract + t_rank, 2),
         },
-        "expansions": len(expanded),
-        "dorks": len(schema.dork_queries),
+        "expansions": [e.model_dump() for e in expanded],
+        "dorks": [d.model_dump() for d in schema.dork_queries],
         "routes": len(lineages),
+        "connector_results": connector_results,
         "sources_fetched": run.total_sources,
         "claims_extracted": sum(len(ev.claims) for ev in evidence.items),
+        "errors": errors if errors else None,
         "lineages": [li.model_dump() for li in lineages],
         "evidence": {
             "items": [ev.model_dump() for ev in evidence.items[:50]],

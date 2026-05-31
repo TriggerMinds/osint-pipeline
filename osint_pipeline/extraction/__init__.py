@@ -1,3 +1,3 @@
-from .extractor import EvidenceExtractor
+from .extractor import EvidenceExtractor, EvidenceExtractorError
 
-__all__ = ["EvidenceExtractor"]
+__all__ = ["EvidenceExtractor", "EvidenceExtractorError"]
