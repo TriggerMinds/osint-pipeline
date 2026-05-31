@@ -1,0 +1,8 @@
+server: 185.146.233.176:443
+auth: r5uVL%JA5p!#m*
+socks5:
+  listen: 127.0.0.1:1080 # De lokale SOCKS5 poort voor je extraction bots
+http:
+  listen: 127.0.0.1:8081 # De lokale HTTP proxy poort voor browsers
+tls:
+  insecure: true # Verander naar false als je later een geldig domein en certificaat instelt
