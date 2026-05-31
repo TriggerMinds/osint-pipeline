@@ -85,47 +85,106 @@ class DorkGenerator:
         )
 
         raw = resp.choices[0].message.content or "{}"
+        warnings: list[str] = []
 
-        # Parse JSON with repair attempt
         parse_result = parse_llm_json(raw)
         if not parse_result.success:
             raise DorkGeneratorError(
                 f"LLM returned invalid JSON: {parse_result.error}"
             )
 
+        if parse_result.repaired:
+            warnings.append(
+                "LLM output was malformed JSON and required repair"
+            )
+
         data = parse_result.data
+        raw_dorks = data.get("dork_queries", [])
 
-        # Build DorkSchema
+        if not raw_dorks:
+            raise DorkGeneratorError(
+                "LLM returned empty dork_queries array"
+            )
+
         dorks: list[DorkQuery] = []
-        for d in data.get("dork_queries", []):
+        errors: list[str] = []
+
+        for i, d in enumerate(raw_dorks):
+            idx = f"dork_queries[{i}]"
+
+            # raw — must be present and non-empty
+            raw_val = d.get("raw")
+            if not raw_val or not isinstance(raw_val, str) or not raw_val.strip():
+                errors.append(f"{idx}.raw: missing or empty")
+                continue
+
+            # operators — each key must be a valid DorkOperator
             ops: dict[DorkOperator, list[str]] = {}
-            for k, v in d.get("operators", {}).items():
+            raw_ops = d.get("operators", {})
+            if not isinstance(raw_ops, dict):
+                errors.append(f"{idx}.operators: expected object, got {type(raw_ops).__name__}")
+                continue
+            for k, v in raw_ops.items():
                 try:
-                    ops[DorkOperator(k)] = v if isinstance(v, list) else [v]
+                    op = DorkOperator(k)
                 except ValueError:
-                    pass
+                    errors.append(
+                        f"{idx}.operators: unknown operator '{k}'. "
+                        f"Valid: {[o.value for o in DorkOperator]}"
+                    )
+                    continue
+                ops[op] = v if isinstance(v, list) else [v]
 
+            # target — must be a valid DorkTarget
+            target_raw = d.get("target")
+            if not target_raw:
+                errors.append(f"{idx}.target: missing")
+                continue
             try:
-                target = DorkTarget(d.get("target", "google"))
+                target = DorkTarget(target_raw)
             except ValueError:
-                target = DorkTarget.GOOGLE
+                errors.append(
+                    f"{idx}.target: unknown target '{target_raw}'. "
+                    f"Valid: {[t.value for t in DorkTarget]}"
+                )
+                continue
 
+            # risk_level — must be a valid RiskLevel
+            risk_raw = d.get("risk_level")
+            if not risk_raw:
+                errors.append(f"{idx}.risk_level: missing")
+                continue
             try:
-                risk = RiskLevel(d.get("risk_level", "safe"))
+                risk = RiskLevel(risk_raw)
             except ValueError:
-                risk = RiskLevel.SAFE
+                errors.append(
+                    f"{idx}.risk_level: unknown risk_level '{risk_raw}'. "
+                    f"Valid: {[r.value for r in RiskLevel]}"
+                )
+                continue
 
             dorks.append(
                 DorkQuery(
-                    raw=d.get("raw", ""),
+                    raw=raw_val.strip(),
                     operators=ops,
                     target=target,
                     description=d.get("description", ""),
-                    language=d.get("language", "en"),
+                    language=d.get("language", ""),
                     purpose=d.get("purpose", ""),
                     expected_signal=d.get("expected_signal", ""),
                     risk_level=risk,
                 )
+            )
+
+        if errors:
+            raise DorkGeneratorError(
+                f"Dork generation produced {len(errors)} invalid item(s):\n"
+                + "\n".join(f"  - {e}" for e in errors)
+            )
+
+        if not dorks:
+            raise DorkGeneratorError(
+                "No valid dork queries were generated"
             )
 
         schema = DorkSchema(
@@ -140,14 +199,14 @@ class DorkGenerator:
             languages=data.get("languages", ["nl", "en", "de", "fr"]),
             negative_terms=data.get("negative_terms", []),
             validation_rules=data.get("validation_rules", {}),
+            validation_warnings=warnings,
             dork_queries=dorks,
         )
 
-        # Final Pydantic validation
         final = validate_llm_output(DorkSchema, schema.model_dump())
         if not final.success:
             raise DorkGeneratorError(
-                f"Generated dork schema failed validation: {final.error}"
+                f"Generated dork schema failed Pydantic validation: {final.error}"
             )
 
         return schema

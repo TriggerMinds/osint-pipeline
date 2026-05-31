@@ -75,6 +75,13 @@
       "title": "Validation Rules",
       "type": "object"
     },
+    "validation_warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Warnings",
+      "type": "array"
+    },
     "dork_queries": {
       "items": {
         "properties": {

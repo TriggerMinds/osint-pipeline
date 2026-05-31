@@ -69,4 +69,5 @@ class DorkSchema(BaseModel):
     languages: list[str] = Field(default_factory=lambda: ["nl", "en", "de", "fr"])
     negative_terms: list[str] = Field(default_factory=list)
     validation_rules: dict[str, str] = Field(default_factory=dict)
+    validation_warnings: list[str] = Field(default_factory=list)
     dork_queries: list[DorkQuery] = Field(default_factory=list)
