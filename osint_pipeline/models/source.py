@@ -11,6 +11,7 @@ class SourceType(str, Enum):
     COMMON_CRAWL = "common_crawl"
     INTERNET_ARCHIVE = "internet_archive"
     WAYBACK = "wayback"
+    CRAWL4AI = "crawl4ai"
 
 
 class FetchStatus(str, Enum):

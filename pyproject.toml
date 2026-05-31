@@ -20,6 +20,18 @@ dependencies = [
 [project.scripts]
 osint = "osint_pipeline.cli:app"
 
+[project.optional-dependencies]
+crawl = [
+    "crawl4ai>=0.4",
+]
+browser = [
+    "playwright>=1.40",
+]
+runtime = [
+    "crawl4ai>=0.4",
+    "playwright>=1.40",
+]
+
 [tool.setuptools.packages.find]
 include = ["osint_pipeline*"]
 

@@ -68,6 +68,7 @@ class TestSourceMetadata:
         assert SourceType.COMMON_CRAWL.value == "common_crawl"
         assert SourceType.INTERNET_ARCHIVE.value == "internet_archive"
         assert SourceType.WAYBACK.value == "wayback"
+        assert SourceType.CRAWL4AI.value == "crawl4ai"
 
     def test_all_fetch_statuses(self):
         assert FetchStatus.PENDING.value == "pending"

@@ -17,6 +17,8 @@ from .multilingual import MultilingualTranslator
 from .connectors import SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector
 from .extraction import EvidenceExtractor
 from .ranking import EvidenceRanker
+from .runtime.checks import RuntimeChecker
+from .crawler import Crawl4AIAdapter
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -38,9 +40,17 @@ def init(
         from pydantic_settings import SettingsConfigDict
         console.print(f"[green]Loaded config from {env_file}[/green]")
 
+    from .runtime.checks import RuntimeChecker
+    checker = RuntimeChecker()
+    env = checker.check_all()
+
+    proxy_display = env.proxy_url or "[yellow]not configured[/yellow]"
+
     console.print(Panel.fit(
         "[bold]OSINT Pipeline[/bold]\n\n"
         f"DeepSeek API: {'[green]configured[/green]' if settings.deepseek_api_key else '[red]missing[/red]'}\n"
+        f"Proxy: {proxy_display}\n"
+        f"Browser engine: {settings.browser_engine}\n"
         f"SearXNG instances: {settings.searxng_instances}\n"
         f"GDELT endpoint: {settings.gdelt_base_url}\n"
         f"Archive CDX: {settings.archive_cdx_url}\n"
@@ -242,6 +252,113 @@ def rank_evidence(
             json.dumps([e.model_dump() for e in ranked.items], indent=2),
             encoding="utf-8",
         )
+        console.print(f"[green]Written to {output}[/green]")
+
+
+@app.command()
+def runtime_check() -> None:
+    """Show runtime environment status."""
+    checker = RuntimeChecker()
+    env = checker.check_all()
+
+    table = Table(title="Runtime Environment")
+    table.add_column("Component", style="cyan")
+    table.add_column("Status", style="white")
+    table.add_column("Detail", style="dim")
+
+    table.add_row(
+        "Proxy",
+        "[green]configured[/green]" if env.has_proxy else "[yellow]not set[/yellow]",
+        env.proxy_url,
+    )
+    table.add_row(
+        "Crawl4AI",
+        "[green]ok[/green]" if env.crawl4ai_available else "[red]missing[/red]",
+        env.crawl4ai_message,
+    )
+    table.add_row(
+        "Playwright",
+        "[green]ok[/green]" if env.playwright_available else "[red]missing[/red]",
+        env.playwright_message,
+    )
+    table.add_row(
+        "CloakBrowser",
+        "[green]ok[/green]" if env.cloakbrowser_available else "[yellow]not configured[/yellow]",
+        env.cloakbrowser_message,
+    )
+
+    console.print(table)
+
+
+@app.command()
+def browser_check() -> None:
+    """Validate browser runtime configuration."""
+    settings = get_settings()
+    engine = settings.browser_engine
+
+    if engine not in ("playwright", "cloakbrowser"):
+        console.print(f"[red]Unknown browser engine: {engine}. Use 'playwright' or 'cloakbrowser'.[/red]")
+        raise typer.Exit(1)
+
+    if engine == "cloakbrowser":
+        exe = settings.cloakbrowser_executable
+        if not exe:
+            console.print("[red]OSINT_CLOAKBROWSER_EXECUTABLE not set.[/red]")
+            console.print("  Set it in .env or export it before running.")
+            console.print("  Example: OSINT_CLOAKBROWSER_EXECUTABLE=/path/to/cloakbrowser")
+            raise typer.Exit(1)
+        from pathlib import Path
+        if not Path(exe).exists():
+            console.print(f"[red]CloakBrowser executable not found at: {exe}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]CloakBrowser configured at: {exe}[/green]")
+
+    elif engine == "playwright":
+        import importlib
+        try:
+            importlib.import_module("playwright")
+            console.print("[green]Playwright is installed[/green]")
+        except ImportError:
+            console.print("[yellow]Playwright not installed. Run: pip install osint-pipeline[browser][/yellow]")
+
+    if settings.proxy_url:
+        console.print(f"[dim]Proxy: {settings.proxy_url}[/dim]")
+
+
+@app.command()
+def crawl_url(
+    url: str = typer.Argument(..., help="URL to crawl"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
+    output_format: str = typer.Option("markdown", "--format", "-f", help="Output format: markdown, html, text"),
+) -> None:
+    """Crawl a URL via Crawl4AI adapter."""
+    adapter = Crawl4AIAdapter()
+    if not adapter.available:
+        console.print(f"[red]{adapter.install_hint}[/red]")
+        raise typer.Exit(1)
+
+    settings = get_settings()
+    proxy = settings.proxy_url or None
+
+    result = _run_async(adapter.crawl_url(
+        url,
+        proxy_url=proxy,
+        output_format=output_format,
+    ))
+
+    if result is None:
+        console.print("[red]Crawl returned no result[/red]")
+        raise typer.Exit(1)
+
+    if result.error:
+        console.print(f"[red]Crawl error: {result.error}[/red]")
+        raise typer.Exit(1)
+
+    content = result.content or ""
+    console.print(Panel.fit(content[:2000] if len(content) > 2000 else content, title=f"Crawl: {url}"))
+
+    if output:
+        output.write_text(content, encoding="utf-8")
         console.print(f"[green]Written to {output}[/green]")
 
 
