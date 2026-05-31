@@ -14,7 +14,10 @@ from .config import get_settings
 from .query_expansion import QueryExpander, QueryExpanderError
 from .dork_generation import DorkGenerator, DorkGeneratorError, validate_dork
 from .multilingual import MultilingualTranslator
-from .connectors import SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector
+from .connectors import (
+    SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector,
+    OpenAlexConnector, GitHubSearchConnector, WikidataConnector, RedditConnector,
+)
 from .extraction import EvidenceExtractor
 from .ranking import EvidenceRanker
 from .runtime.checks import RuntimeChecker, mask_proxy_url
@@ -142,6 +145,10 @@ def search(
     connectors = {
         "searxng": SearXNGConnector(),
         "gdelt": GDELTConnector(),
+        "openalex": OpenAlexConnector(),
+        "github": GitHubSearchConnector(),
+        "wikidata": WikidataConnector(),
+        "reddit": RedditConnector(),
     }
 
     conn = connectors.get(source)

@@ -12,6 +12,11 @@ class SourceType(str, Enum):
     INTERNET_ARCHIVE = "internet_archive"
     WAYBACK = "wayback"
     CRAWL4AI = "crawl4ai"
+    OPENALEX = "openalex"
+    GITHUB = "github"
+    WIKIDATA = "wikidata"
+    REDDIT = "reddit"
+    WAYMORE = "waymore"
 
 
 class FetchStatus(str, Enum):
@@ -34,6 +39,8 @@ class SourceMetadata(BaseModel):
     status_code: Optional[int] = None
     fetch_status: FetchStatus = FetchStatus.PENDING
     archive_url: Optional[str] = None
+    run_id: str = ""
+    query_lineage_id: str = ""
 
 
 class SourceResult(BaseModel):

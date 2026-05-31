@@ -16,12 +16,18 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-reasoner"
 
-    # Connectors
+    # Connectors — search
     searxng_instances: str = "http://localhost:8888"
     gdelt_base_url: str = "https://api.gdeltproject.org/api/v2"
     commoncrawl_base_url: str = "https://index.commoncrawl.org"
     archive_cdx_url: str = "https://web.archive.org/cdx/search/cdx"
     archive_wayback_url: str = "https://web.archive.org/web"
+
+    # Connectors — new
+    openalex_email: str = ""
+    github_token: str = ""
+    wikidata_endpoint: str = "https://query.wikidata.org/sparql"
+    reddit_user_agent: str = "osint-pipeline/0.1"
 
     # Retry / timeout
     max_concurrent_fetches: int = 10

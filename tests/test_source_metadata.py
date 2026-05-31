@@ -69,6 +69,11 @@ class TestSourceMetadata:
         assert SourceType.INTERNET_ARCHIVE.value == "internet_archive"
         assert SourceType.WAYBACK.value == "wayback"
         assert SourceType.CRAWL4AI.value == "crawl4ai"
+        assert SourceType.OPENALEX.value == "openalex"
+        assert SourceType.GITHUB.value == "github"
+        assert SourceType.WIKIDATA.value == "wikidata"
+        assert SourceType.REDDIT.value == "reddit"
+        assert SourceType.WAYMORE.value == "waymore"
 
     def test_all_fetch_statuses(self):
         assert FetchStatus.PENDING.value == "pending"
@@ -87,3 +92,14 @@ class TestSourceMetadata:
         assert d["url"] == "https://example.com"
         assert d["source_type"] == "searxng"
         assert d["fetch_status"] == "pending"
+
+    def test_source_metadata_has_lineage_fields(self):
+        sm = SourceMetadata(
+            url="https://x.com",
+            source_type=SourceType.SEARXNG,
+            discovered_by_query="q",
+            run_id="r1",
+            query_lineage_id="l1",
+        )
+        assert sm.run_id == "r1"
+        assert sm.query_lineage_id == "l1"
