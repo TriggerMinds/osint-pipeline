@@ -26,6 +26,7 @@ from .connectors import (
 )
 from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
 from .research.strategies import PROFILE_SEARXNG
+from .runs_manager import RunArchiver
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -175,11 +176,19 @@ def search(
             src.metadata.language,
         )
 
+    safe_data = [s.metadata.model_dump() for s in result.sources]
+
     if output:
-        output.write_text(
-            json.dumps([s.metadata.model_dump() for s in result.sources], indent=2),
-            encoding="utf-8",
-        )
+        output.write_text(json.dumps(safe_data, indent=2), encoding="utf-8")
+
+    archiver = RunArchiver()
+    run_dir = archiver.archive_run(
+        query=query,
+        artifact_data={"source": source, "query": query, "results": safe_data, "error": result.error},
+        profile=f"search_{source}",
+        timing=None,
+        errors=[result.error] if result.error else None,
+    )
 
     try:
         console.print(table)
@@ -191,6 +200,8 @@ def search(
 
     if output:
         console.print(f"[green]Written to {output}[/green]")
+
+    console.print(f"[dim]Archived: {run_dir}[/dim]")
 
 
 @app.command()
@@ -543,12 +554,21 @@ def run_research(
         for e in artifact.errors:
             console.print(f"  [dim]{e}[/dim]")
 
+    safe_data = artifact.model_dump_safe()
+    archiver = RunArchiver()
+    run_dir = archiver.archive_run(
+        query=query,
+        artifact_data=safe_data,
+        profile=profile,
+        timing=safe_data.get("timing"),
+        errors=artifact.errors if artifact.errors else None,
+    )
+
     if output:
-        output.write_text(
-            json.dumps(artifact.model_dump_safe(), indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        output.write_text(json.dumps(safe_data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         console.print(f"[green]Results written to {output}[/green]")
+
+    console.print(f"[dim]Archived: {run_dir}[/dim]")
 
     if artifact.errors:
         raise typer.Exit(1)

@@ -141,6 +141,16 @@ class TestProxyPassthrough:
             # If crawl4ai is installed, the result should at least have metadata
             assert result is not None
 
+    def test_env_not_tracked_in_git(self):
+        """.env must not be tracked in git."""
+        import subprocess
+        repo = Path(__file__).parent.parent
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", ".env"],
+            capture_output=True, text=True, cwd=str(repo),
+        )
+        assert not result.stdout.strip(), ".env is tracked in git!"
+
     def test_env_example_contains_no_secrets(self):
         """The .env.example file must contain no real secrets, IPs, or credentials."""
         path = Path(__file__).parent.parent / ".env.example"
@@ -152,12 +162,14 @@ class TestProxyPassthrough:
         assert "sk-" not in content.replace("sk-your", "")
 
     def test_no_binaries_in_repo(self):
-        """No browser binaries, profiles, or hysteria configs in the repo."""
+        """No browser binaries, profiles, or hysteria configs tracked in git."""
+        import subprocess
         repo = Path(__file__).parent.parent
-        # Check for obvious binary/profile patterns
-        for pattern in ["*.exe", "*.dll", "*.so", "*.dylib"]:
-            matches = list(repo.glob(pattern))
-            for m in matches:
-                # Allow .exe in .git if it's a test fixture or similar
-                if ".git" not in str(m):
-                    assert False, f"Unexpected binary in repo: {m}"
+        result = subprocess.run(
+            ["git", "ls-files", "--cached"],
+            capture_output=True, text=True, cwd=str(repo),
+        )
+        tracked = result.stdout.splitlines()
+        for f in tracked:
+            if f.endswith((".exe", ".dll", ".so", ".dylib")):
+                assert False, f"Binary tracked in git: {f}"
