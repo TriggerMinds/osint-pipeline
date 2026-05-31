@@ -19,8 +19,9 @@ class TestProxyURL:
         assert s.proxy_url == "socks5://127.0.0.1:1080"
 
     def test_proxy_url_empty(self):
-        from osint_pipeline.config.settings import Settings
-        s = Settings()
+        from osint_pipeline.config.settings import Settings, reset_settings
+        reset_settings()
+        s = Settings(proxy_url="")
         assert s.proxy_url == ""
 
     def test_proxy_url_masked_no_secrets(self):

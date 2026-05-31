@@ -171,16 +171,21 @@ def search(
             src.metadata.language,
         )
 
-    console.print(table)
-
-    if result.error:
-        console.print(f"[red]Error: {result.error}[/red]")
-
     if output:
         output.write_text(
             json.dumps([s.metadata.model_dump() for s in result.sources], indent=2),
             encoding="utf-8",
         )
+
+    try:
+        console.print(table)
+    except UnicodeEncodeError:
+        console.print(f"[green]{len(result.sources)} results from {source}[/green]")
+
+    if result.error:
+        console.print(f"[red]Error: {result.error}[/red]")
+
+    if output:
         console.print(f"[green]Written to {output}[/green]")
 
 
@@ -433,7 +438,11 @@ def run_research(
         enrich = False
         dedup_mode = "canonical_url"
         min_confidence = 0.3
-        if not disable_connector:
+        base_required = ["searxng", "gdelt", "openalex"]
+        if disable_connector:
+            required_connectors = [c for c in base_required if c not in disable_connector]
+        else:
+            required_connectors = base_required
             disable_connector = ["archive_cdx", "commoncrawl", "github", "wikidata", "reddit"]
 
     runner = ResearchRunner()
@@ -450,6 +459,7 @@ def run_research(
         dry_run=dry_run,
         fixture_mode=fixture_mode or (profile == "smoke" and fixture_mode is False and False),
         fixture_dir=str(fixture_dir) if fixture_dir else None,
+        required_connectors=required_connectors,
     )
     artifact = _run_async(runner.run(query, config))
 

@@ -111,6 +111,9 @@
                 "allinurl",
                 "allintext",
                 "source",
+                "cache",
+                "link",
+                "related",
                 "numrange"
               ]
             },

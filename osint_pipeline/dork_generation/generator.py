@@ -35,7 +35,7 @@ Generate precise search dork queries. Output ONLY valid JSON matching this schem
   ]
 }
 
-Valid operators: site, intitle, inurl, intext, filetype, inanchor, before, after, allintitle, allinurl, allintext, source, numrange
+Valid operators: site, intitle, inurl, intext, filetype, inanchor, before, after, allintitle, allinurl, allintext, source, cache, link, related, numrange
 Valid targets: google, bing, duckduckgo, yandex, searxng, archive_cdx, gdelt, commoncrawl, openalex, github, reddit, wikidata
 Risk levels: safe, low, medium, high
 
@@ -45,8 +45,15 @@ Generate 5-10 dorks covering:
 3. Admin/login pages
 4. Exposed directories/databases
 5. Cached/archived content
-6. News articles
-7. Social media"""  # noqa: E501
+6. News articles via gdelt
+7. Social media
+8. Academic publications via openalex
+9. Code repositories via github
+10. Entity data via wikidata
+
+Use diverse targets. Generate at least 2-3 dorks with target set to news-specific
+sources like gdelt, and 1-2 for openalex."""
+
 
 
 class DorkGenerator:
@@ -128,9 +135,8 @@ class DorkGenerator:
                 try:
                     op = DorkOperator(k)
                 except ValueError:
-                    errors.append(
-                        f"{idx}.operators: unknown operator '{k}'. "
-                        f"Valid: {[o.value for o in DorkOperator]}"
+                    warnings.append(
+                        f"{idx}.operators: unknown operator '{k}' — skipped"
                     )
                     continue
                 ops[op] = v if isinstance(v, list) else [v]

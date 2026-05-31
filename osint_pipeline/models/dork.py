@@ -18,6 +18,9 @@ class DorkOperator(str, Enum):
     ALLINURL = "allinurl"
     ALLINTEXT = "allintext"
     SOURCE = "source"
+    CACHE = "cache"
+    LINK = "link"
+    RELATED = "related"
     NUMRANGE = "numrange"
 
 

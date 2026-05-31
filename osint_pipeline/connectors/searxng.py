@@ -51,6 +51,7 @@ class SearXNGConnector(BaseConnector):
         now = datetime.now(timezone.utc).isoformat()
         results: list[SourceResult] = []
 
+        last_error: str | None = None
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             for instance in self.instances:
                 query_params: dict = {
@@ -69,10 +70,8 @@ class SearXNGConnector(BaseConnector):
                         timeout=self._timeout,
                     )
                 except ConnectorError as exc:
-                    return ConnectorResult(
-                        sources=results,
-                        error=_compact_error(exc),
-                    )
+                    last_error = _compact_error(exc)
+                    continue
 
                 if resp.status_code != 200:
                     continue
@@ -99,6 +98,8 @@ class SearXNGConnector(BaseConnector):
                         )
                     )
 
+        if not results and last_error:
+            return ConnectorResult(sources=results, error=last_error)
         return ConnectorResult(sources=results)
 
     async def health(self) -> bool:

@@ -205,7 +205,18 @@ class TestNoSilentFallback:
 class TestDorkGeneratorErrors:
     def test_generator_missing_api_key(self):
         import os
+        from osint_pipeline.config.settings import reset_settings
         key = os.environ.pop("OSINT_DEEPSEEK_API_KEY", None)
+        # Also clear the settings cache so it re-reads from env (not .env)
+        import osint_pipeline.config.settings as s
+        old_env = os.environ.get("OSINT_DEEPSEEK_API_KEY", "")
+        if "OSINT_DEEPSEEK_API_KEY" in os.environ:
+            del os.environ["OSINT_DEEPSEEK_API_KEY"]
+        reset_settings()
+        import osint_pipeline.dork_generation.generator as dg
+        # Force settings to reload without the key
+        dg.get_settings = lambda: s.Settings(deepseek_api_key="")
+        reset_settings()
         try:
             from osint_pipeline.dork_generation import DorkGenerator
             import asyncio
@@ -213,6 +224,7 @@ class TestDorkGeneratorErrors:
             with pytest.raises(DorkGeneratorError, match="API key"):
                 asyncio.run(gen.generate("test"))
         finally:
+            reset_settings()
             if key:
                 os.environ["OSINT_DEEPSEEK_API_KEY"] = key
 

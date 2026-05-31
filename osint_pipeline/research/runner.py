@@ -22,6 +22,7 @@ from ..graphrag import EvidenceGraphBuilder
 from ..models.source import SourceResult
 from ..models.lineage import ResearchRun, QueryLineage
 from ..models.evidence import EvidenceCollection, EvidenceClaim
+from ..models.dork import DorkQuery, DorkTarget
 from .artifacts import ResearchArtifact, ConnectorExecutionResult, TimingBreakdown, GraphSummary
 from .sanitize import sanitize_error_message
 
@@ -46,6 +47,7 @@ class ResearchRunConfig:
     dry_run: bool = False
     fixture_mode: bool = False
     fixture_dir: Optional[str] = None
+    required_connectors: Optional[list[str]] = None
 
 
 _ALL_CONNECTORS = [
@@ -235,6 +237,78 @@ class ResearchRunner:
                 error=sanitize_error_message(result.error) if result.error else None,
             ))
 
+        # Synthetic dork injection for required connectors
+        synthetic_added = 0
+        required_active = []
+        if cfg.required_connectors and enabled_set:
+            for req_name in cfg.required_connectors:
+                if req_name not in enabled_set:
+                    continue
+                required_active.append(req_name)
+                has_dork = any(cr.connector == req_name for cr in conn_results)
+                if has_dork:
+                    continue
+                conn_synthetic = _get_connector(req_name)
+                if conn_synthetic is None:
+                    continue
+                synthetic_added += 1
+
+                li_synth = QueryLineage(
+                    id=f"l_required_{req_name}",
+                    original_query=query,
+                    expanded_query=f"required connector: {req_name}",
+                    language="en",
+                    connector=req_name,
+                    dork_raw=query,
+                    dork_target=req_name,
+                )
+                lineages.append(li_synth)
+
+                query_for_search = query
+                if cfg.dry_run:
+                    conn_results.append(ConnectorExecutionResult(
+                        connector=req_name, query=query_for_search, sources_found=0,
+                    ))
+                    continue
+
+                if cfg.fixture_mode:
+                    fixture_result = await self._load_fixture(cfg, req_name, query_for_search)
+                    if fixture_result is None:
+                        artifact.add_error(f"required {req_name}: no fixture found")
+                        continue
+                    result_obj = fixture_result
+                else:
+                    try:
+                        result_obj = await conn_synthetic.search(query_for_search)  # type: ignore
+                    except Exception as exc:
+                        artifact.add_error(f"required {req_name}: {type(exc).__name__}: {exc}")
+                        continue
+                    if result_obj.error:
+                        artifact.add_error(f"required {req_name}: {result_obj.error}")
+
+                results_synth = result_obj.sources[:cfg.max_results_per_connector]
+                for src in results_synth:
+                    src.metadata.run_id = run_id
+                    src.metadata.query_lineage_id = li_synth.id
+                    src.metadata.discovered_by_query = query_for_search
+                all_sources.extend(results_synth)
+                conn_results.append(ConnectorExecutionResult(
+                    connector=req_name,
+                    query=sanitize_error_message(query_for_search),
+                    sources_found=len(results_synth),
+                    error=sanitize_error_message(result_obj.error) if result_obj.error else None,
+                ))
+
+        # Coverage tracking
+        covered = list({cr.connector for cr in conn_results})
+        missing = [r for r in required_active if r not in covered]
+        coverage = {
+            "required_connectors": required_active,
+            "covered_connectors": covered,
+            "missing_connectors": missing,
+            "synthetic_dorks_added": synthetic_added,
+        }
+
         # Step 4: Deduplicate
         all_sources = _dedup_sources(all_sources, mode=cfg.dedup_mode)
         timing.fetch = time.time() - t0
@@ -319,6 +393,7 @@ class ResearchRunner:
         }
         artifact.graph = GraphSummary(nodes=len(graph.nodes), edges=len(graph.edges))
         artifact.dry_run = cfg.dry_run
+        artifact.coverage = coverage
         artifact.quality_controls = {
             "dry_run": cfg.dry_run,
             "fixture_mode": cfg.fixture_mode,
@@ -332,6 +407,7 @@ class ResearchRunner:
             "crawl_enrichment_policy": cfg.crawl_enrichment_policy,
             "archive_preference": cfg.archive_preference,
             "source_score_threshold": cfg.source_score_threshold,
+            "required_connectors": cfg.required_connectors,
         }
 
         artifact.errors = [sanitize_error_message(e) for e in artifact.errors]
