@@ -147,6 +147,13 @@ class EvidenceGraphBuilder:
         return f"{prefix}_{h}"
 
 
+def _add_data(parent, key: str, value: str) -> None:
+    """Add a <data key="..."> element with escaped text content."""
+    import xml.etree.ElementTree as ET
+    d = ET.SubElement(parent, "data", key=key)
+    d.text = value
+
+
 class EvidenceGraphExporter:
     @staticmethod
     def to_json(graph: EvidenceGraph, path: str | Path) -> None:
@@ -158,34 +165,27 @@ class EvidenceGraphExporter:
 
     @staticmethod
     def to_graphml(graph: EvidenceGraph, path: str | Path) -> None:
-        path = Path(path)
-        lines: list[str] = [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"',
-            '  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
-            '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
-            '  <key id="type" for="node" attr.name="node_type" attr.type="string"/>',
-            '  <key id="rel" for="edge" attr.name="relation" attr.type="string"/>',
-            '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
-            '  <graph id="G" edgedefault="directed">',
-        ]
+        import xml.etree.ElementTree as ET
+
+        root = ET.Element("graphml", xmlns="http://graphml.graphdrawing.org/xmlns")
+        ET.SubElement(root, "key", attrib={"id": "label", "for": "node", "attr.name": "label", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "type", "for": "node", "attr.name": "node_type", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "rel", "for": "edge", "attr.name": "relation", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "weight", "for": "edge", "attr.name": "weight", "attr.type": "double"})
+        graph_el = ET.SubElement(root, "graph", attrib={"id": "G", "edgedefault": "directed"})
+
         for nid, node in graph.nodes.items():
-            lines.append(
-                f'    <node id="{nid}">'
-                f'<data key="label">{node.label}</data>'
-                f'<data key="type">{node.node_type}</data>'
-                f'</node>'
-            )
+            node_el = ET.SubElement(graph_el, "node", attrib={"id": nid})
+            _add_data(node_el, "label", node.label)
+            _add_data(node_el, "type", node.node_type)
+
         for edge in graph.edges:
-            lines.append(
-                f'    <edge source="{edge.source_id}" target="{edge.target_id}">'
-                f'<data key="rel">{edge.relation}</data>'
-                f'<data key="weight">{edge.weight}</data>'
-                f'</edge>'
-            )
-        lines.append('  </graph>')
-        lines.append('</graphml>')
-        path.write_text("\n".join(lines), encoding="utf-8")
+            edge_el = ET.SubElement(graph_el, "edge", attrib={"source": edge.source_id, "target": edge.target_id})
+            _add_data(edge_el, "rel", edge.relation)
+            _add_data(edge_el, "weight", str(edge.weight))
+
+        tree = ET.ElementTree(root)
+        tree.write(str(path), encoding="utf-8", xml_declaration=True)
 
     @staticmethod
     def to_csv_nodes(graph: EvidenceGraph, path: str | Path) -> None:

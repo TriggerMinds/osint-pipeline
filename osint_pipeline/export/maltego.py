@@ -4,9 +4,15 @@ import csv
 import json
 from pathlib import Path
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from ..models.evidence import EvidenceCollection
 from ..models.graph import KnowledgeGraph
+
+
+def _add_data(parent: ET.Element, key: str, value: str) -> None:
+    d = ET.SubElement(parent, "data", key=key)
+    d.text = value
 
 
 class MaltegoExport:
@@ -19,36 +25,26 @@ class MaltegoExport:
     def to_graphml(collection: EvidenceCollection, graph: KnowledgeGraph, path: str | Path) -> None:
         """Export entities and relations as GraphML."""
         path = Path(path)
-        lines: list[str] = [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"',
-            '  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
-            '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
-            '  <key id="type" for="node" attr.name="type" attr.type="string"/>',
-            '  <key id="url" for="node" attr.name="url" attr.type="string"/>',
-            '  <key id="relation" for="edge" attr.name="relation" attr.type="string"/>',
-            '  <graph id="G" edgedefault="directed">',
-        ]
+
+        root = ET.Element("graphml", xmlns="http://graphml.graphdrawing.org/xmlns")
+        ET.SubElement(root, "key", attrib={"id": "label", "for": "node", "attr.name": "label", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "type", "for": "node", "attr.name": "type", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "url", "for": "node", "attr.name": "url", "attr.type": "string"})
+        ET.SubElement(root, "key", attrib={"id": "relation", "for": "edge", "attr.name": "relation", "attr.type": "string"})
+        graph_el = ET.SubElement(root, "graph", attrib={"id": "G", "edgedefault": "directed"})
 
         for eid, ent in graph.entities.items():
-            lines.append(
-                f'    <node id="{eid}">'
-                f'<data key="label">{ent.name}</data>'
-                f'<data key="type">{ent.type}</data>'
-                f'<data key="url">{ent.source_urls[0] if ent.source_urls else ""}</data>'
-                f'</node>'
-            )
+            node_el = ET.SubElement(graph_el, "node", attrib={"id": eid})
+            _add_data(node_el, "label", ent.name)
+            _add_data(node_el, "type", ent.type)
+            _add_data(node_el, "url", ent.source_urls[0] if ent.source_urls else "")
 
         for rel in graph.relations:
-            lines.append(
-                f'    <edge source="{rel.source_entity_id}" target="{rel.target_entity_id}">'
-                f'<data key="relation">{rel.relation_type}</data>'
-                f'</edge>'
-            )
+            edge_el = ET.SubElement(graph_el, "edge", attrib={"source": rel.source_entity_id, "target": rel.target_entity_id})
+            _add_data(edge_el, "relation", rel.relation_type)
 
-        lines.append('  </graph>')
-        lines.append('</graphml>')
-        path.write_text("\n".join(lines), encoding="utf-8")
+        tree = ET.ElementTree(root)
+        tree.write(str(path), encoding="utf-8", xml_declaration=True)
 
     @staticmethod
     def to_csv(collection: EvidenceCollection, path: str | Path) -> None:

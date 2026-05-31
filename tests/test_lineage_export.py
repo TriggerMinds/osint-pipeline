@@ -138,6 +138,33 @@ class TestMaltegoExport:
         assert "Entity 1" in content
         assert "works_for" in content
 
+    def test_maltego_graphml_valid_xml(self, tmp_path: Path):
+        """Maltego GraphML can be parsed with ElementTree."""
+        import xml.etree.ElementTree as ET
+        ec = self._make_evidence()
+        kg = self._make_graph()
+        out = tmp_path / "valid.graphml"
+        MaltegoExport.to_graphml(ec, kg, out)
+        tree = ET.parse(str(out))
+        assert tree.getroot().tag.endswith("graphml")
+
+    def test_maltego_graphml_special_chars(self, tmp_path: Path):
+        """Entity names with &, <, > produce valid XML."""
+        import xml.etree.ElementTree as ET
+        ec = self._make_evidence()
+        kg = KnowledgeGraph(query="test")
+        kg.entities["e1"] = GraphEntity(id="e1", name="AT&T Company", type="org")
+        kg.entities["e2"] = GraphEntity(id="e2", name="<script>bad</script>", type="entity")
+        kg.relations.append(
+            GraphRelation(source_entity_id="e1", target_entity_id="e2", relation_type="owns")
+        )
+        out = tmp_path / "special.graphml"
+        MaltegoExport.to_graphml(ec, kg, out)
+        tree = ET.parse(str(out))
+        content = out.read_text()
+        assert "AT&amp;T" in content
+        assert "&lt;script&gt;" in content
+
 
 # ── Adapter stubs ─────────────────────────────────────────────────────
 

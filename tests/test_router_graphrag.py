@@ -181,6 +181,72 @@ class TestEvidenceGraphExporter:
         assert "Node 1" in content
         assert "references" in content
 
+    def test_graphml_valid_xml(self, tmp_path: Path):
+        """Exported GraphML can be parsed with ElementTree."""
+        import xml.etree.ElementTree as ET
+        g = self._make_graph()
+        out = tmp_path / "valid.graphml"
+        EvidenceGraphExporter.to_graphml(g, out)
+        tree = ET.parse(str(out))
+        root = tree.getroot()
+        assert root.tag.endswith("graphml")
+
+    def test_graphml_claim_with_ampersand(self, tmp_path: Path):
+        """Claims containing & must produce valid XML."""
+        g = EvidenceGraph(query="test")
+        g.nodes["n1"] = GraphNode(id="n1", label="A & B", node_type="claim")
+        out = tmp_path / "amp.graphml"
+        EvidenceGraphExporter.to_graphml(g, out)
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(str(out))  # raises if invalid XML
+        root = tree.getroot()
+        assert "A &amp; B" in out.read_text()
+
+    def test_graphml_url_with_query_string(self, tmp_path: Path):
+        """URLs with ?a=1&b=2 must produce valid XML."""
+        g = EvidenceGraph(query="test")
+        g.nodes["n1"] = GraphNode(
+            id="n1",
+            label="https://example.com/page?a=1&b=2",
+            node_type="source",
+        )
+        out = tmp_path / "url.graphml"
+        EvidenceGraphExporter.to_graphml(g, out)
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(str(out))
+        root = tree.getroot()
+        assert "a=1&amp;b=2" in out.read_text()
+
+    def test_graphml_claim_with_html_tags(self, tmp_path: Path):
+        """Claims containing <script> must produce valid XML."""
+        g = EvidenceGraph(query="test")
+        g.nodes["n1"] = GraphNode(
+            id="n1",
+            label='<script>alert("xss")</script>',
+            node_type="claim",
+        )
+        out = tmp_path / "script.graphml"
+        EvidenceGraphExporter.to_graphml(g, out)
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(str(out))
+        content = out.read_text()
+        assert "&lt;script&gt;" in content
+
+    def test_graphml_unicode_label(self, tmp_path: Path):
+        """Unicode labels must survive roundtrip via XML."""
+        g = EvidenceGraph(query="test")
+        g.nodes["n1"] = GraphNode(id="n1", label="水素貯蔵", node_type="entity")
+        out = tmp_path / "unicode.graphml"
+        EvidenceGraphExporter.to_graphml(g, out)
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(str(out))
+        ns = "{http://graphml.graphdrawing.org/xmlns}"
+        for data in tree.iter(f"{ns}data"):
+            if data.attrib.get("key") == "label":
+                assert data.text == "水素貯蔵"
+                return
+        assert False, "label data element not found"
+
     def test_export_csv_nodes(self, tmp_path: Path):
         g = self._make_graph()
         out = tmp_path / "nodes.csv"
