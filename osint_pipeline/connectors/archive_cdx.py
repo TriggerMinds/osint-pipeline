@@ -7,7 +7,8 @@ from typing import Optional
 import httpx
 
 from ..models.source import SourceMetadata, SourceResult, SourceType, FetchStatus
-from .base import BaseConnector, ConnectorResult
+from .base import BaseConnector, ConnectorResult, _compact_error
+from .errors import ConnectorError
 
 
 @dataclass
@@ -63,9 +64,9 @@ class ArchiveCDXConnector(BaseConnector):
                     params=query_params,
                     timeout=self._timeout,
                 )
-            except Exception as exc:
+            except ConnectorError as exc:
                 return ConnectorResult(
-                    sources=[], error=f"Archive CDX request failed: {type(exc).__name__}"
+                    sources=[], error=_compact_error(exc)
                 )
 
             if resp.status_code != 200:

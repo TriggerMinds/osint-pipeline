@@ -10,12 +10,23 @@ import httpx
 
 from ..config import get_settings
 from ..models.source import SourceResult
+from .errors import (
+    ConnectorError,
+    ConnectorHTTPStatusError,
+    ConnectorRetriesExhaustedError,
+    ConnectorTimeoutError,
+)
 
 
 @dataclass
 class ConnectorResult:
     sources: list[SourceResult]
     error: Optional[str] = None
+
+
+def _compact_error(exc: ConnectorError) -> str:
+    cls_name = type(exc).__name__
+    return f"{cls_name}: {exc}"
 
 
 class BaseConnector(ABC):
@@ -66,19 +77,19 @@ class BaseConnector(ABC):
                 status = resp.status_code
 
                 if status in self._no_retry_codes:
-                    return resp
+                    raise ConnectorHTTPStatusError(status, url)
 
                 if status in self._retry_codes:
                     if attempt < retries:
                         delay = self._get_retry_delay(resp, attempt, base_delay, max_backoff, jitter)
                         await asyncio.sleep(delay)
                         continue
-                    raise RuntimeError(
-                        f"Request to {url} returned status {status} "
-                        f"after {retries + 1} attempt(s)"
-                    )
+                    raise ConnectorRetriesExhaustedError(status, url, retries)
 
                 return resp
+
+            except ConnectorError:
+                raise
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                 last_exc = exc
@@ -86,15 +97,17 @@ class BaseConnector(ABC):
                     delay = min(base_delay * (2 ** attempt), max_backoff)
                     if jitter > 0:
                         delay += random.uniform(0, jitter)
+                    delay = min(delay, max_backoff)
                     await asyncio.sleep(delay)
                 continue
 
-        if last_exc:
-            raise last_exc  # type: ignore[misc]
+            except Exception as exc:
+                raise ConnectorError(f"unexpected error: {type(exc).__name__}", original=exc)
 
-        raise RuntimeError(
-            f"Request to {url} failed after {retries + 1} attempt(s)"
-        )
+        if last_exc:
+            raise ConnectorTimeoutError(original=last_exc)
+
+        raise ConnectorRetriesExhaustedError(0, url, retries)
 
     @staticmethod
     def _get_retry_delay(

@@ -66,7 +66,7 @@ class TestSearXNGConnector:
             result = await connector.search("query")
             assert route.called
             assert result.error is not None
-            assert "RuntimeError" in result.error or "request" in result.error.lower()
+            assert "ConnectorRetriesExhaustedError" in result.error
 
     @pytest.mark.asyncio
     async def test_search_network_error_returns_error(self, connector):
@@ -77,7 +77,7 @@ class TestSearXNGConnector:
             result = await connector.search("query")
             assert route.called
             assert result.error is not None
-            assert "SearXNG" in result.error
+            assert "ConnectorError" in result.error
 
     @pytest.mark.asyncio
     async def test_health_success(self, connector):
@@ -435,15 +435,17 @@ class _RetryTestConnector(BaseConnector):
 
     async def search(self, query: str, **kwargs) -> ConnectorResult:
         import httpx as _httpx
+        from osint_pipeline.connectors.base import _compact_error
+        from osint_pipeline.connectors.errors import ConnectorError
         async with _httpx.AsyncClient(timeout=5) as client:
             try:
                 await self._request_with_retry(
                     client, "GET", "http://test.local/endpoint",
                 )
                 return ConnectorResult(sources=[])
-            except Exception as exc:
+            except ConnectorError as exc:
                 return ConnectorResult(
-                    sources=[], error=f"RuntimeError: {exc}"
+                    sources=[], error=_compact_error(exc)
                 )
 
     async def health(self) -> bool:
@@ -497,6 +499,40 @@ class TestRetryLogic:
             route = respx.get("http://test.local/endpoint").respond(status_code=503)
             conn = _RetryTestConnector()
             result = await conn.search("q")
-            # Should return a controlled error, not an unhandled exception
             assert result.error is not None
-            assert "RuntimeError" in result.error or "request" in result.error.lower()
+            assert "ConnectorRetriesExhaustedError" in result.error
+
+    @pytest.mark.asyncio
+    async def test_400_does_not_retry(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=400)
+            conn = _RetryTestConnector()
+            await conn.search("q")
+            assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_403_does_not_retry(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=403)
+            conn = _RetryTestConnector()
+            await conn.search("q")
+            assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_410_does_not_retry(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=410)
+            conn = _RetryTestConnector()
+            await conn.search("q")
+            assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_compact_error_format_typed(self):
+        from osint_pipeline.connectors.errors import ConnectorRetriesExhaustedError, ConnectorTimeoutError, ConnectorHTTPStatusError
+        from osint_pipeline.connectors.base import _compact_error
+        e1 = ConnectorRetriesExhaustedError(503, "http://x", 3)
+        assert _compact_error(e1) == "ConnectorRetriesExhaustedError: HTTP 503 after 4 attempt(s)"
+        e2 = ConnectorTimeoutError()
+        assert _compact_error(e2) == "ConnectorTimeoutError: request timed out"
+        e3 = ConnectorHTTPStatusError(404, "http://x")
+        assert _compact_error(e3) == "ConnectorHTTPStatusError: HTTP 404"
