@@ -37,6 +37,7 @@ class SearXNGConnector(BaseConnector):
         language: str = "en",
         categories: tuple[str, ...] = ("general",),
         time_range: Optional[str] = None,
+        engines: tuple[str, ...] = (),
         **kwargs,
     ) -> ConnectorResult:
         params = SearXNGParams(
@@ -44,6 +45,7 @@ class SearXNGConnector(BaseConnector):
             language=language,
             categories=categories,
             time_range=time_range,
+            engines=engines,
         )
         return await self._search(params)
 
@@ -62,6 +64,8 @@ class SearXNGConnector(BaseConnector):
                 }
                 if params.time_range:
                     query_params["time_range"] = params.time_range
+                if params.engines:
+                    query_params["engines"] = ",".join(params.engines)
 
                 try:
                     resp = await self._request_with_retry(

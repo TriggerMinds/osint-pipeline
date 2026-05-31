@@ -17,6 +17,7 @@ class SourceType(str, Enum):
     WIKIDATA = "wikidata"
     REDDIT = "reddit"
     WAYMORE = "waymore"
+    ARCHIVE_TODAY = "archive_today"
 
 
 class FetchStatus(str, Enum):

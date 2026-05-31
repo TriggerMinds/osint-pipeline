@@ -8,6 +8,7 @@ from .openalex import OpenAlexConnector
 from .github_search import GitHubSearchConnector
 from .wikidata import WikidataConnector
 from .reddit import RedditConnector
+from .archive_today import ArchiveTodayConnector
 
 __all__ = [
     "BaseConnector", "ConnectorResult",
@@ -16,5 +17,5 @@ __all__ = [
     "SearXNGConnector", "GDELTConnector",
     "ArchiveCDXConnector", "CommonCrawlConnector",
     "OpenAlexConnector", "GitHubSearchConnector",
-    "WikidataConnector", "RedditConnector",
+    "WikidataConnector", "RedditConnector", "ArchiveTodayConnector",
 ]

@@ -22,6 +22,7 @@ from .models.dork import DorkQuery, DorkSchema
 from .connectors import (
     SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector,
     OpenAlexConnector, GitHubSearchConnector, WikidataConnector, RedditConnector,
+    ArchiveTodayConnector,
 )
 from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
 
@@ -138,7 +139,7 @@ def generate_dorks(
 def search(
     query: str = typer.Argument(..., help="Search query"),
     source: str = typer.Option(
-        "searxng", "--source", "-s", help="Source: searxng, gdelt, openalex, github, wikidata, reddit"
+        "searxng", "--source", "-s", help="Source: searxng, gdelt, openalex, github, wikidata, reddit, archive_today"
     ),
     language: str = typer.Option("en", "--language", "-l", help="Language code"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
@@ -151,6 +152,7 @@ def search(
         "github": GitHubSearchConnector(),
         "wikidata": WikidataConnector(),
         "reddit": RedditConnector(),
+        "archive_today": ArchiveTodayConnector(),
     }
 
     conn = connectors.get(source)
@@ -509,6 +511,7 @@ def run_research(
         max_concurrency=presets["concur"],
         max_concurrency_per_connector=presets["per_concur"],
         connector_timeout_seconds=connector_timeout,
+        _profile_name=profile,
         dry_run=dry_run,
         fixture_mode=fixture_mode,
         fixture_dir=str(fixture_dir) if fixture_dir else None,

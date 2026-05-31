@@ -13,6 +13,7 @@ from ..dork_generation import DorkGenerator, DorkGeneratorError
 from ..connectors import (
     SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector,
     OpenAlexConnector, GitHubSearchConnector, WikidataConnector, RedditConnector,
+    ArchiveTodayConnector,
 )
 from ..extraction import EvidenceExtractor, EvidenceExtractorError
 from ..ranking import EvidenceRanker
@@ -26,6 +27,7 @@ from ..models.dork import DorkQuery, DorkTarget
 from .artifacts import ResearchArtifact, ConnectorExecutionResult, TimingBreakdown, GraphSummary
 from .sanitize import sanitize_error_message
 from .executor import AsyncConnectorExecutor, ConnectorExecutionConfig, ConnectorTask, ConnectorTaskResult
+from .strategies import build_discovery_strategy, mark_engines_used
 
 _TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|_ga|_gl)", re.IGNORECASE)
 
@@ -50,6 +52,7 @@ class ResearchRunConfig:
     fixture_mode: bool = False
     fixture_dir: Optional[str] = None
     required_connectors: Optional[list[str]] = None
+    _profile_name: Optional[str] = None
     max_concurrency: int = 5
     max_concurrency_per_connector: int = 2
     connector_timeout_seconds: float = 30.0
@@ -57,7 +60,7 @@ class ResearchRunConfig:
 
 _ALL_CONNECTORS = [
     "searxng", "gdelt", "archive_cdx", "commoncrawl",
-    "openalex", "github", "wikidata", "reddit",
+    "openalex", "github", "wikidata", "reddit", "archive_today",
 ]
 
 _CONNECTOR_INSTANCES: dict[str, object] | None = None
@@ -75,6 +78,7 @@ def _get_connector(name: str):
             "github": GitHubSearchConnector(),
             "wikidata": WikidataConnector(),
             "reddit": RedditConnector(),
+            "archive_today": ArchiveTodayConnector(),
         }
     return _CONNECTOR_INSTANCES.get(name)
 
@@ -397,6 +401,13 @@ class ResearchRunner:
         artifact.graph = GraphSummary(nodes=len(graph.nodes), edges=len(graph.edges))
         artifact.dry_run = cfg.dry_run
         artifact.coverage = coverage
+        # Build discovery_strategy from context
+        strategy = build_discovery_strategy(
+            profile_name=getattr(cfg, "_profile_name", None),
+            engines=[],
+        )
+        mark_engines_used(strategy, conn_results)
+        artifact.discovery_strategy = strategy
         artifact.quality_controls = {
             "dry_run": cfg.dry_run,
             "fixture_mode": cfg.fixture_mode,

@@ -52,6 +52,7 @@ class ResearchArtifact(BaseModel):
     graph: Optional[GraphSummary] = None
     quality_controls: Optional[dict] = None
     coverage: Optional[dict] = None
+    discovery_strategy: Optional[dict] = None
 
     def add_error(self, msg: str) -> None:
         self.errors.append(sanitize_error_message(msg))
