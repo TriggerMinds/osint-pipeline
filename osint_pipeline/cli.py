@@ -22,6 +22,9 @@ from .extraction import EvidenceExtractor
 from .ranking import EvidenceRanker
 from .runtime.checks import RuntimeChecker, mask_proxy_url
 from .crawler import Crawl4AIAdapter
+from .router import SourceRouter
+from .graphrag import EvidenceGraphBuilder, EvidenceGraphExporter
+from .models.dork import DorkQuery, DorkSchema
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -366,6 +369,137 @@ def crawl_url(
     if output:
         output.write_text(content, encoding="utf-8")
         console.print(f"[green]Written to {output}[/green]")
+
+
+@app.command()
+def route_dork(
+    dork_file: Path = typer.Argument(..., help="JSON file with DorkSchema or DorkQuery"),
+) -> None:
+    """Route a dork query to the appropriate connector."""
+    data = json.loads(dork_file.read_text(encoding="utf-8"))
+    router = SourceRouter()
+
+    # Accept either a full DorkSchema or a single DorkQuery
+    dorks: list[DorkQuery] = []
+    if "dork_queries" in data:
+        schema = DorkSchema(**data)
+        dorks = schema.dork_queries
+    else:
+        dorks = [DorkQuery(**data)]
+
+    table = Table(title="Dork Routing Results")
+    table.add_column("Target", style="cyan")
+    table.add_column("Connector", style="white")
+    table.add_column("Mode", style="dim")
+    table.add_column("Reason", style="green")
+
+    for d in dorks:
+        route = router.route(d)
+        table.add_row(
+            d.target.value,
+            route.connector,
+            route.execution_mode,
+            route.reason,
+        )
+
+    console.print(table)
+
+
+@app.command()
+def run_research(
+    query: str = typer.Argument(..., help="Research query"),
+) -> None:
+    """Run a full research pipeline (stub — expand + dork + route)."""
+    from .query_expansion import QueryExpander
+    from .dork_generation import DorkGenerator
+    from .router import SourceRouter
+    from .models.lineage import ResearchRun, QueryLineage
+    from datetime import datetime, timezone
+
+    run = ResearchRun(original_query=query)
+
+    # Step 1: Expand
+    try:
+        expander = QueryExpander()
+        expanded = _run_async(expander.expand(query))
+    except QueryExpanderError as e:
+        console.print(f"[red]Expansion failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Step 2: Generate dorks
+    try:
+        dork_gen = DorkGenerator()
+        schema = _run_async(dork_gen.generate(query, expanded))
+    except DorkGeneratorError as e:
+        console.print(f"[red]Dork generation failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Step 3: Route
+    router = SourceRouter()
+    lineages: list[QueryLineage] = []
+    for i, d in enumerate(schema.dork_queries):
+        route = router.route(d)
+        li = router.build_lineage(
+            d, route,
+            lineage_id=f"l_{i:03d}",
+            original_query=query,
+        )
+        lineages.append(li)
+
+    run.query_lineages = lineages
+    run.status = "completed"
+
+    # Output
+    console.print(Panel.fit(
+        f"[bold]Research Run[/bold]\n\n"
+        f"Query: {query}\n"
+        f"Expansions: {len(expanded)}\n"
+        f"Dorks: {len(schema.dork_queries)}\n"
+        f"Routes: {len(lineages)}\n"
+        f"Status: {run.status}",
+        title="Research Run",
+    ))
+
+    route_table = Table(title="Routes")
+    route_table.add_column("Connector", style="cyan")
+    route_table.add_column("Dork", style="white")
+    route_table.add_column("Mode", style="dim")
+    for li in lineages:
+        route_table.add_row(li.connector, li.dork_raw[:80], li.dork_target)
+    console.print(route_table)
+
+
+@app.command()
+def export_graph(
+    evidence_file: Path = typer.Argument(..., help="JSON evidence collection file"),
+    format: str = typer.Option("graphml", "--format", "-f", help="Output format: graphml, json, csv-nodes, csv-edges"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
+) -> None:
+    """Build and export an evidence graph."""
+    from .models.evidence import EvidenceCollection
+
+    data = json.loads(evidence_file.read_text(encoding="utf-8"))
+    collection = EvidenceCollection(**data)
+
+    builder = EvidenceGraphBuilder()
+    graph = builder.build(collection)
+
+    exporter = EvidenceGraphExporter()
+    out_path = output or Path(f"evidence_graph.{format.replace('csv-', 'csv_')}")
+
+    if format == "graphml":
+        exporter.to_graphml(graph, out_path)
+    elif format == "json":
+        exporter.to_json(graph, out_path)
+    elif format == "csv-nodes":
+        exporter.to_csv_nodes(graph, out_path)
+    elif format == "csv-edges":
+        exporter.to_csv_edges(graph, out_path)
+    else:
+        console.print(f"[red]Unknown format: {format}. Options: graphml, json, csv-nodes, csv-edges[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Graph exported to {out_path} ({len(graph.nodes)} nodes, {len(graph.edges)} edges)[/green]")
 
 
 if __name__ == "__main__":
