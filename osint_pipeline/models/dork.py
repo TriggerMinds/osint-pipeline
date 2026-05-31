@@ -37,6 +37,7 @@ class DorkTarget(str, Enum):
     GITHUB = "github"
     REDDIT = "reddit"
     WIKIDATA = "wikidata"
+    ARCHIVE_TODAY = "archive_today"
 
 
 class RiskLevel(str, Enum):

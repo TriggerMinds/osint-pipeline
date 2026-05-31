@@ -27,7 +27,7 @@ from ..models.dork import DorkQuery, DorkTarget
 from .artifacts import ResearchArtifact, ConnectorExecutionResult, TimingBreakdown, GraphSummary
 from .sanitize import sanitize_error_message
 from .executor import AsyncConnectorExecutor, ConnectorExecutionConfig, ConnectorTask, ConnectorTaskResult
-from .strategies import build_discovery_strategy, mark_engines_used
+from .strategies import build_discovery_strategy
 
 _TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|_ga|_gl)", re.IGNORECASE)
 
@@ -56,6 +56,8 @@ class ResearchRunConfig:
     max_concurrency: int = 5
     max_concurrency_per_connector: int = 2
     connector_timeout_seconds: float = 30.0
+    searxng_strategy: str = "default"
+    searxng_engines: tuple[str, ...] = ()
 
 
 _ALL_CONNECTORS = [
@@ -177,6 +179,27 @@ class ResearchRunner:
         if cfg.enabled_languages:
             dorks = [d for d in dorks if d.language in cfg.enabled_languages or not d.language]
 
+        # Inject deleted-content queries for deleted_content profile
+        if cfg._profile_name == "deleted_content":
+            from .strategies import build_deleted_content_queries
+            deleted_targets = [
+                ("archive_cdx", DorkTarget.ARCHIVE_CDX),
+                ("commoncrawl", DorkTarget.COMMONCRAWL),
+                ("archive_today", DorkTarget.ARCHIVE_TODAY),
+                ("searxng", DorkTarget.SEARXNG),
+            ]
+            dc_queries = build_deleted_content_queries(query)
+            for conn_name, target in deleted_targets:
+                if conn_name not in enabled_set:
+                    continue
+                cc = per_connector_counts.get(conn_name, 0)
+                max_for_connector = cfg.max_tasks_per_connector - cc
+                for qi, q in enumerate(dc_queries[:max_for_connector]):
+                    dorks.append(DorkQuery(
+                        raw=q, target=target,
+                        description=f"deleted-content strategy: {q}",
+                    ))
+
         per_connector_counts: dict[str, int] = {}
 
         for i, d in enumerate(dorks):
@@ -230,6 +253,7 @@ class ResearchRunner:
                 language=d.language or "en",
                 lineage_id=li.id,
                 run_id=run_id,
+                engines=cfg.searxng_engines if route.connector == "searxng" else (),
             ))
 
         # Synthetic required-connector dorks
@@ -282,6 +306,7 @@ class ResearchRunner:
                 executor_tasks.append(ConnectorTask(
                     connector=req_name, query=query, language="en",
                     lineage_id=li_s.id, run_id=run_id, synthetic=True,
+                    engines=cfg.searxng_engines if req_name == "searxng" else (),
                 ))
 
         # Execute all live connector tasks in parallel
@@ -404,9 +429,10 @@ class ResearchRunner:
         # Build discovery_strategy from context
         strategy = build_discovery_strategy(
             profile_name=getattr(cfg, "_profile_name", None),
-            engines=[],
+            searxng_strategy=cfg.searxng_strategy,
+            searxng_engines=cfg.searxng_engines,
+            connectors_used=[cr.connector for cr in conn_results],
         )
-        mark_engines_used(strategy, conn_results)
         artifact.discovery_strategy = strategy
         artifact.quality_controls = {
             "dry_run": cfg.dry_run,
@@ -426,6 +452,8 @@ class ResearchRunner:
             "max_concurrency": cfg.max_concurrency,
             "max_concurrency_per_connector": cfg.max_concurrency_per_connector,
             "connector_timeout_seconds": cfg.connector_timeout_seconds,
+            "searxng_strategy": cfg.searxng_strategy,
+            "searxng_engines": list(cfg.searxng_engines),
         }
 
         artifact.errors = [sanitize_error_message(e) for e in artifact.errors]

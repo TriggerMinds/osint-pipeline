@@ -25,6 +25,7 @@ from .connectors import (
     ArchiveTodayConnector,
 )
 from .research import ResearchRunner, ResearchRunConfig, ResearchArtifact
+from .research.strategies import PROFILE_SEARXNG
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -511,6 +512,8 @@ def run_research(
         max_concurrency=presets["concur"],
         max_concurrency_per_connector=presets["per_concur"],
         connector_timeout_seconds=connector_timeout,
+        searxng_strategy=PROFILE_SEARXNG.get(profile, {}).get("strategy", "default") if profile else "default",
+        searxng_engines=PROFILE_SEARXNG.get(profile, {}).get("engines", ()) if profile else (),
         _profile_name=profile,
         dry_run=dry_run,
         fixture_mode=fixture_mode,

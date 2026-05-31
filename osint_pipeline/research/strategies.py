@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 _ARCHIVE_SUFFIXES = [
     "site:archive.org",
     "site:archive.ph",
@@ -12,15 +10,35 @@ _ARCHIVE_SUFFIXES = [
     "source:news",
 ]
 
+SEARXNG_STRATEGIES: dict[str, tuple[str, ...]] = {
+    "default": (),
+    "file_discovery": ("brave", "mojeek", "bing"),
+    "multi_engine": ("brave", "mojeek", "yandex", "bing", "duckduckgo"),
+    "regional_diverse": ("yandex", "baidu", "mojeek", "brave", "bing"),
+}
+
+PROFILE_SEARXNG: dict[str, dict] = {
+    "smoke": {"strategy": "default", "engines": ()},
+    "archive_first": {"strategy": "file_discovery", "engines": ("brave", "mojeek", "bing")},
+    "deleted_content": {"strategy": "file_discovery", "engines": ("brave", "mojeek", "bing", "yandex")},
+    "multi_engine": {"strategy": "multi_engine", "engines": ("brave", "mojeek", "yandex", "bing", "duckduckgo")},
+    "foreign_index": {"strategy": "regional_diverse", "engines": ("yandex", "baidu", "mojeek", "brave", "bing")},
+    "deep_archive": {"strategy": "file_discovery", "engines": ("brave", "mojeek", "bing")},
+}
+
 
 def build_discovery_strategy(
     profile_name: str | None,
-    engines: list[str] | None = None,
+    searxng_strategy: str = "default",
+    searxng_engines: tuple[str, ...] = (),
+    connectors_used: list[str] | None = None,
 ) -> dict:
     strategy: dict = {
         "profile": profile_name or "default",
-        "engines_requested": engines or [],
+        "searxng_strategy": searxng_strategy,
+        "engines_requested": list(searxng_engines),
         "engines_used": [],
+        "connectors_used": sorted(connectors_used or []),
         "archive_sources": [],
         "deleted_content_query": False,
     }
@@ -52,10 +70,3 @@ def build_deleted_content_queries(query: str) -> list[str]:
         else:
             suffixes.append(f"{query} {s}")
     return suffixes
-
-
-def mark_engines_used(strategy: dict, connector_results: list) -> None:
-    engines = set()
-    for cr in connector_results:
-        engines.add(cr.connector)
-    strategy["engines_used"] = sorted(engines)

@@ -40,6 +40,7 @@ class SourceMetadata(BaseModel):
     status_code: Optional[int] = None
     fetch_status: FetchStatus = FetchStatus.PENDING
     archive_url: Optional[str] = None
+    archive_provider: Optional[str] = None
     run_id: str = ""
     query_lineage_id: str = ""
 

@@ -30,6 +30,7 @@ TARGET_CONNECTOR_MAP: dict[DorkTarget, str] = {
     DorkTarget.GITHUB: "github",
     DorkTarget.REDDIT: "reddit",
     DorkTarget.WIKIDATA: "wikidata",
+    DorkTarget.ARCHIVE_TODAY: "archive_today",
 }
 
 TARGET_EXECUTION_MODE: dict[DorkTarget, str] = {
@@ -45,6 +46,7 @@ TARGET_EXECUTION_MODE: dict[DorkTarget, str] = {
     DorkTarget.GITHUB: "code_search",
     DorkTarget.REDDIT: "social_search",
     DorkTarget.WIKIDATA: "entity_search",
+    DorkTarget.ARCHIVE_TODAY: "archive_lookup",
 }
 
 TARGET_REASON: dict[DorkTarget, str] = {
@@ -60,6 +62,7 @@ TARGET_REASON: dict[DorkTarget, str] = {
     DorkTarget.GITHUB: "Source code, repositories and issues on GitHub",
     DorkTarget.REDDIT: "Social media discussions and posts on Reddit",
     DorkTarget.WIKIDATA: "Structured entity data from Wikidata SPARQL endpoint",
+    DorkTarget.ARCHIVE_TODAY: "Archive.today / archive.ph snapshot search",
 }
 
 

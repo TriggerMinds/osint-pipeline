@@ -23,6 +23,7 @@ class ConnectorTask(BaseModel):
     lineage_id: str = ""
     run_id: str = ""
     synthetic: bool = False
+    engines: tuple[str, ...] = ()
 
 
 class ConnectorTaskResult(BaseModel):
@@ -70,10 +71,10 @@ class AsyncConnectorExecutor:
                 t0 = time.time()
                 try:
                     async with asyncio.timeout(self.config.timeout_seconds):
-                        result = await conn.search(  # type: ignore
-                            task.query,
-                            language=task.language or "en",
-                        )
+                        kwargs: dict = {"language": task.language or "en"}
+                        if task.connector == "searxng" and task.engines:
+                            kwargs["engines"] = task.engines
+                        result = await conn.search(task.query, **kwargs)  # type: ignore
                 except TimeoutError:
                     return ConnectorTaskResult(
                         connector=task.connector,

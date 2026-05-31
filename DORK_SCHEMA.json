@@ -133,7 +133,8 @@
               "openalex",
               "github",
               "reddit",
-              "wikidata"
+              "wikidata",
+              "archive_today"
             ],
             "title": "DorkTarget",
             "type": "string"

@@ -66,6 +66,7 @@ class ArchiveTodayConnector(BaseConnector):
                             domain=domain.replace("https://", ""),
                             fetch_status=FetchStatus.SUCCESS,
                             archive_url=snapshot_url,
+                            archive_provider="archive_today",
                         ),
                     ))
                     if len(sources) >= params.limit:
