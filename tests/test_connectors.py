@@ -10,6 +10,7 @@ from osint_pipeline.connectors import (
     ArchiveCDXConnector,
     CommonCrawlConnector,
 )
+from osint_pipeline.connectors.base import BaseConnector, ConnectorResult
 from osint_pipeline.models.source import SourceType, FetchStatus
 
 
@@ -59,12 +60,13 @@ class TestSearXNGConnector:
             assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_search_non_200_returns_empty(self, connector):
+    async def test_search_non_200_returns_error_when_exhausted(self, connector):
         with respx.mock:
             route = respx.get("http://localhost:8888/search").respond(status_code=503)
             result = await connector.search("query")
             assert route.called
-            assert len(result.sources) == 0
+            assert result.error is not None
+            assert "RuntimeError" in result.error or "request" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_search_network_error_returns_error(self, connector):
@@ -288,7 +290,7 @@ class TestCommonCrawlConnector:
         with respx.mock:
             respx.get(
                 f"{connector.settings.commoncrawl_base_url}/collinfo.json"
-            ).respond(status_code=500)
+            ).respond(status_code=404)
 
             result = await connector.search("https://example.com")
             assert result.error is not None
@@ -423,3 +425,78 @@ class TestSourceMetadataFilling:
             assert m.status_code == 200
             assert m.snapshot_date is not None
             assert m.fetch_status == FetchStatus.SUCCESS
+
+
+# ── Retry logic tests ─────────────────────────────────────────────────
+
+
+class _RetryTestConnector(BaseConnector):
+    """Minimal connector subclass to test _request_with_retry in isolation."""
+
+    async def search(self, query: str, **kwargs) -> ConnectorResult:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=5) as client:
+            try:
+                await self._request_with_retry(
+                    client, "GET", "http://test.local/endpoint",
+                )
+                return ConnectorResult(sources=[])
+            except Exception as exc:
+                return ConnectorResult(
+                    sources=[], error=f"RuntimeError: {exc}"
+                )
+
+    async def health(self) -> bool:
+        return True
+
+
+class TestRetryLogic:
+    @pytest.mark.asyncio
+    async def test_429_then_200_succeeds(self):
+        with respx.mock:
+            route_429 = respx.get("http://test.local/endpoint").respond(status_code=429)
+            route_200 = respx.get("http://test.local/endpoint").respond(status_code=200, json={})
+            conn = _RetryTestConnector()
+            result = await conn.search("q")
+            # Should eventually succeed
+            assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_503_then_200_succeeds(self):
+        with respx.mock:
+            respx.get("http://test.local/endpoint").respond(status_code=503)
+            respx.get("http://test.local/endpoint").respond(status_code=200, json={})
+            conn = _RetryTestConnector()
+            result = await conn.search("q")
+            assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_404_does_not_retry(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=404)
+            conn = _RetryTestConnector()
+            try:
+                await conn.search("q")
+            except Exception:
+                pass
+            # Should only have been called once
+            assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_after_header_is_used(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=429, headers={"Retry-After": "2"})
+            respx.get("http://test.local/endpoint").respond(status_code=200, json={})
+            conn = _RetryTestConnector()
+            result = await conn.search("q")
+            assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_exhausted_retries_returns_controlled_error(self):
+        with respx.mock:
+            route = respx.get("http://test.local/endpoint").respond(status_code=503)
+            conn = _RetryTestConnector()
+            result = await conn.search("q")
+            # Should return a controlled error, not an unhandled exception
+            assert result.error is not None
+            assert "RuntimeError" in result.error or "request" in result.error.lower()

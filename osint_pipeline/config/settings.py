@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     request_timeout: int = 30
     request_retries: int = 3
     request_backoff_factor: float = 1.5
+    request_max_backoff: float = 60.0
+    request_jitter: float = 0.5
+    retry_status_codes: str = "429,500,502,503,504"
     max_queries_per_expansion: int = 15
     evidence_min_confidence: float = 0.3
 
