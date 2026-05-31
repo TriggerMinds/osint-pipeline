@@ -444,7 +444,8 @@ def run_research(
         required_connectors = list(enabled_connectors)
         max_dorks = 3
         max_results = 10
-        max_per_connector = 5
+        max_tasks_per_connector = 2
+        max_per_connector = 10
         enrich = False
         dedup_mode = "canonical_url"
         min_confidence = 0.3
@@ -457,6 +458,7 @@ def run_research(
     config = ResearchRunConfig(
         max_dorks=max_dorks,
         max_results=max_results,
+        max_tasks_per_connector=max_tasks_per_connector,
         max_results_per_connector=max_per_connector,
         enrich=enrich,
         dedup_mode=dedup_mode,

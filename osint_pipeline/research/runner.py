@@ -34,6 +34,7 @@ _TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|_ga|_gl)", re.
 class ResearchRunConfig:
     max_dorks: int = 25
     max_results: int = 50
+    max_tasks_per_connector: int = 3
     max_results_per_connector: int = 20
     max_crawl_urls: int = 10
     enrich: bool = False
@@ -183,7 +184,7 @@ class ResearchRunner:
             if route.connector not in enabled_set:
                 continue
             cc = per_connector_counts.get(route.connector, 0)
-            if cc >= cfg.max_results_per_connector:
+            if cc >= cfg.max_tasks_per_connector:
                 continue
             _c = _get_connector(route.connector)
             if _c is None:
@@ -401,6 +402,7 @@ class ResearchRunner:
             "fixture_mode": cfg.fixture_mode,
             "max_dorks": cfg.max_dorks,
             "max_results": cfg.max_results,
+            "max_tasks_per_connector": cfg.max_tasks_per_connector,
             "max_results_per_connector": cfg.max_results_per_connector,
             "enabled_connectors": sorted(enabled_set),
             "enabled_languages": cfg.enabled_languages,

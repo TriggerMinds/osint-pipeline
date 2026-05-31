@@ -35,13 +35,15 @@ class TestSmokeProfile:
         c = ResearchRunConfig(
             max_dorks=3,
             max_results=10,
-            max_results_per_connector=5,
+            max_tasks_per_connector=2,
+            max_results_per_connector=10,
             min_evidence_confidence=0.3,
             dedup_mode="canonical_url",
         )
         assert c.max_dorks == 3
         assert c.max_results == 10
-        assert c.max_results_per_connector == 5
+        assert c.max_tasks_per_connector == 2
+        assert c.max_results_per_connector == 10
         assert c.min_evidence_confidence == 0.3
         assert c.dedup_mode == "canonical_url"
 

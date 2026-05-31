@@ -67,7 +67,11 @@ class TestLanguageFilter:
 
 
 class TestMaxPerConnector:
-    def test_max_per_connector_config(self):
+    def test_max_tasks_per_connector_config(self):
+        config = ResearchRunConfig(max_tasks_per_connector=3)
+        assert config.max_tasks_per_connector == 3
+
+    def test_max_results_per_connector_config(self):
         config = ResearchRunConfig(max_results_per_connector=10)
         assert config.max_results_per_connector == 10
 
