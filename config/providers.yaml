@@ -1,8 +1,0 @@
-# Provider API keys — set via environment variables or this file
-deepseek:
-  api_key_env: OSINT_DEEPSEEK_KEY
-  api_key: "sk-84d7af26393e4c71bd13c4e07d4776ab"
-  base_url: https://api.deepseek.com/v1
-  model: deepseek-reasoner
-  temperature: 0.1
-  max_tokens: 8192
