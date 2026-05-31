@@ -8,6 +8,15 @@ from .models.evidence import EvidenceCollection
 from .models.lineage import QueryLineage
 
 
+class RouterError(Exception):
+    """Raised when a dork target cannot be routed."""
+
+    def __init__(self, target: str, map_name: str) -> None:
+        self.target = target
+        self.map_name = map_name
+        super().__init__(f"Unknown target '{target}' in {map_name}")
+
+
 TARGET_CONNECTOR_MAP: dict[DorkTarget, str] = {
     DorkTarget.GOOGLE: "searxng",
     DorkTarget.BING: "searxng",
@@ -68,9 +77,18 @@ class RouteResult:
 class SourceRouter:
     def route(self, dork: DorkQuery) -> RouteResult:
         target = dork.target
-        connector = TARGET_CONNECTOR_MAP.get(target, "searxng")
-        exec_mode = TARGET_EXECUTION_MODE.get(target, "web_search")
-        reason = TARGET_REASON.get(target, f"Route to {connector}")
+        target_str = target.value if isinstance(target, DorkTarget) else str(target)
+
+        if target not in TARGET_CONNECTOR_MAP:
+            raise RouterError(target_str, "TARGET_CONNECTOR_MAP")
+        if target not in TARGET_EXECUTION_MODE:
+            raise RouterError(target_str, "TARGET_EXECUTION_MODE")
+        if target not in TARGET_REASON:
+            raise RouterError(target_str, "TARGET_REASON")
+
+        connector = TARGET_CONNECTOR_MAP[target]
+        exec_mode = TARGET_EXECUTION_MODE[target]
+        reason = TARGET_REASON[target]
 
         return RouteResult(
             connector=connector,

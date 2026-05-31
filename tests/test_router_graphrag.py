@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from osint_pipeline.router import SourceRouter, RouteResult, TARGET_CONNECTOR_MAP
+from osint_pipeline.router import SourceRouter, RouteResult, RouterError, TARGET_CONNECTOR_MAP, TARGET_EXECUTION_MODE, TARGET_REASON
 from osint_pipeline.models.dork import DorkQuery, DorkTarget
 from osint_pipeline.models.evidence import Evidence, EvidenceClaim, EvidenceCollection
 from osint_pipeline.graphrag import EvidenceGraphBuilder, EvidenceGraphExporter, EvidenceGraph, GraphNode, GraphEdge
@@ -60,9 +60,12 @@ class TestSourceRouter:
         assert route.connector == "reddit"
         assert route.execution_mode == "social_search"
 
-    def test_all_targets_have_connector(self):
+    def test_all_targets_in_all_maps(self):
+        """Every DorkTarget value must be present in all three routing maps."""
         for target in DorkTarget:
-            assert target in TARGET_CONNECTOR_MAP, f"Missing mapping for {target}"
+            assert target in TARGET_CONNECTOR_MAP, f"Missing {target} in TARGET_CONNECTOR_MAP"
+            assert target in TARGET_EXECUTION_MODE, f"Missing {target} in TARGET_EXECUTION_MODE"
+            assert target in TARGET_REASON, f"Missing {target} in TARGET_REASON"
 
     def test_route_preserves_purpose_and_risk(self, router):
         dork = DorkQuery(
@@ -84,6 +87,27 @@ class TestSourceRouter:
         assert lineage.original_query == "test query"
         assert lineage.connector == "searxng"
         assert lineage.dork_target == "searxng"
+
+    def test_invalid_target_raises_router_error(self, router):
+        """A DorkQuery with a target not in the routing maps must raise RouterError."""
+        from osint_pipeline.models.dork import DorkTarget
+        # Construct a DorkQuery with a monkey-patched target that doesn't
+        # match any known DorkTarget. Import the enum to verify coverage.
+        dork = DorkQuery(raw="test", target=DorkTarget.GOOGLE)
+
+        # The real DorkTarget.GOOGLE is valid — but we verify that if a
+        # target were to be missing from a map, the router raises.
+        # Remove GOOGLE from the map temporarily to simulate.
+        orig = TARGET_CONNECTOR_MAP.pop(DorkTarget.GOOGLE)
+        try:
+            with pytest.raises(RouterError, match="TARGET_CONNECTOR_MAP"):
+                router.route(dork)
+        finally:
+            TARGET_CONNECTOR_MAP[DorkTarget.GOOGLE] = orig
+
+    def test_empty_dork_queries_still_handled(self, router):
+        """An empty list of dorks routes to an empty result list."""
+        assert router.route_schema([]) == []
 
 
 # ── EvidenceGraph (GraphRAG-light) ────────────────────────────────────

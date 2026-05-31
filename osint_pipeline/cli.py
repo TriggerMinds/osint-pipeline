@@ -22,7 +22,7 @@ from .extraction import EvidenceExtractor
 from .ranking import EvidenceRanker
 from .runtime.checks import RuntimeChecker, mask_proxy_url
 from .crawler import Crawl4AIAdapter
-from .router import SourceRouter
+from .router import RouterError, SourceRouter
 from .graphrag import EvidenceGraphBuilder, EvidenceGraphExporter
 from .models.dork import DorkQuery, DorkSchema
 
@@ -393,14 +393,18 @@ def route_dork(
     table.add_column("Mode", style="dim")
     table.add_column("Reason", style="green")
 
-    for d in dorks:
-        route = router.route(d)
-        table.add_row(
-            d.target.value,
-            route.connector,
-            route.execution_mode,
-            route.reason,
-        )
+    try:
+        for d in dorks:
+            route = router.route(d)
+            table.add_row(
+                d.target.value,
+                route.connector,
+                route.execution_mode,
+                route.reason,
+            )
+    except RouterError as e:
+        console.print(f"[red]Routing failed: {e}[/red]")
+        raise typer.Exit(1)
 
     console.print(table)
 
@@ -412,7 +416,6 @@ def run_research(
     """Run a full research pipeline (stub — expand + dork + route)."""
     from .query_expansion import QueryExpander
     from .dork_generation import DorkGenerator
-    from .router import SourceRouter
     from .models.lineage import ResearchRun, QueryLineage
     from datetime import datetime, timezone
 
