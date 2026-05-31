@@ -106,20 +106,33 @@ class TestWikidataConnector:
     async def test_search_returns_entities(self, connector):
         with respx.mock:
             route = respx.get(
-                "https://query.wikidata.org/sparql"
+                "https://www.wikidata.org/w/api.php",
+                params={
+                    "action": "wbsearchentities",
+                    "search": "Douglas Adams",
+                    "language": "en",
+                    "uselang": "en",
+                    "format": "json",
+                    "limit": "25",
+                },
             ).respond(
                 status_code=200,
                 json={
-                    "results": {
-                        "bindings": [
-                            {
-                                "item": {"value": "http://www.wikidata.org/entity/Q42"},
-                                "itemLabel": {"value": "Douglas Adams"},
-                                "itemDescription": {"value": "English author"},
-                                "article": {"value": "https://en.wikipedia.org/wiki/Douglas_Adams"},
-                            }
-                        ]
-                    }
+                    "search": [
+                        {
+                            "id": "Q42",
+                            "title": "Douglas Adams",
+                            "label": "Douglas Adams",
+                            "description": "English author",
+                            "concepturi": "http://www.wikidata.org/entity/Q42",
+                            "url": "//www.wikidata.org/entity/Q42",
+                            "match": {
+                                "type": "label",
+                                "language": "en",
+                                "text": "Douglas Adams",
+                            },
+                        }
+                    ],
                 },
             )
             result = await connector.search("Douglas Adams")
@@ -128,7 +141,7 @@ class TestWikidataConnector:
             s = result.sources[0]
             assert s.metadata.source_type == SourceType.WIKIDATA
             assert s.metadata.title == "Douglas Adams"
-            assert "en.wikipedia.org" in s.metadata.url
+            assert s.metadata.url == "https://www.wikidata.org/entity/Q42"
 
 
 # ── Reddit ────────────────────────────────────────────────────────────
@@ -196,7 +209,7 @@ class TestSearchCLIDispatcher:
         mocks = {
             "openalex": ("https://api.openalex.org/works", {"results": []}),
             "github": ("https://api.github.com/search/repos", {"items": []}),
-            "wikidata": ("https://query.wikidata.org/sparql", {"results": {"bindings": []}}),
+            "wikidata": ("https://www.wikidata.org/w/api.php", {"search": []}),
             "reddit": ("https://www.reddit.com/search.json", {"data": {"children": []}}),
         }
 

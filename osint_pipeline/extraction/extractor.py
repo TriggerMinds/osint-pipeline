@@ -33,7 +33,9 @@ class EvidenceExtractor:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    async def extract(self, sources: list[SourceResult]) -> EvidenceCollection:
+    async def extract(
+        self, sources: list[SourceResult], query: str = "",
+    ) -> EvidenceCollection:
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(
@@ -41,7 +43,7 @@ class EvidenceExtractor:
             base_url=self.settings.deepseek_base_url,
         )
 
-        collection = EvidenceCollection(query="")
+        collection = EvidenceCollection(query=query)
 
         for src in sources:
             text = (src.content or "")[:8000]

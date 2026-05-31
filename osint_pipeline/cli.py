@@ -40,6 +40,22 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
+async def _check_proxied_ip(transport: Any) -> str:
+    """Check the public IP visible through the given proxy transport."""
+    import httpx
+    async with httpx.AsyncClient(transport=transport, timeout=10) as c:
+        r = await c.get("https://api.ipify.org?format=json")
+        return r.json().get("ip", "unknown")
+
+
+async def _check_direct_ip() -> str:
+    """Check the public IP visible via a direct (non-proxied) connection."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get("https://api.ipify.org?format=json")
+        return r.json().get("ip", "unknown")
+
+
 @app.command()
 def init(
     env_file: Optional[Path] = typer.Option(
@@ -431,7 +447,6 @@ def route_dork(
     console.print(table)
 
 
-@app.command()
 def _run_and_show(config, query, output, profile, plan=None):
     runner = ResearchRunner()
     artifact = _run_async(runner.run(query, config))
@@ -807,12 +822,7 @@ def proxy_check(
         # Test proxied IP
         try:
             transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
-            async def _check():
-                async with httpx.AsyncClient(transport=transport, timeout=10) as c:
-                    r = await c.get("https://api.ipify.org?format=json")
-                    return r.json().get("ip", "unknown")
-            import asyncio
-            proxied_ip = asyncio.run(_check())
+            proxied_ip = _run_async(_check_proxied_ip(transport))
             info["proxy_route_verified"] = True
             info["proxied_ip"] = proxied_ip
         except Exception as exc:
@@ -822,12 +832,7 @@ def proxy_check(
 
         if compare_direct:
             try:
-                async def _direct():
-                    async with httpx.AsyncClient(timeout=10) as c:
-                        r = await c.get("https://api.ipify.org?format=json")
-                        return r.json().get("ip", "unknown")
-                import asyncio
-                direct_ip = asyncio.run(_direct())
+                direct_ip = _run_async(_check_direct_ip())
                 info["direct_ip"] = direct_ip
             except Exception as exc:
                 info["direct_ip"] = "unreachable"

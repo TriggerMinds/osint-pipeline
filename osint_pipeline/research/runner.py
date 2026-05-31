@@ -387,7 +387,7 @@ class ResearchRunner:
         else:
             try:
                 extractor = EvidenceExtractor()
-                evidence = await extractor.extract(all_sources)
+                evidence = await extractor.extract(all_sources, query=query)
             except (EvidenceExtractorError, Exception) as exc:
                 artifact.add_error(f"evidence extraction: {type(exc).__name__}: {exc}")
                 evidence = EvidenceCollection(query=query)
