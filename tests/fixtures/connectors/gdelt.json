@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {
+      "metadata": {
+        "url": "https://news.example.com/hydrogen-investment",
+        "source_type": "gdelt",
+        "language": "en",
+        "discovered_by_query": "waterstof opslag nederland",
+        "title": "Netherlands Announces Hydrogen Investment",
+        "domain": "news.example.com"
+      },
+      "content": "The Dutch government announced a €1B investment in hydrogen storage infrastructure."
+    }
+  ]
+}

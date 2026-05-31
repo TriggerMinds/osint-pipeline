@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {
+      "metadata": {
+        "url": "https://example.com/hydrogen-storage",
+        "source_type": "searxng",
+        "language": "en",
+        "discovered_by_query": "waterstof opslag nederland",
+        "title": "Hydrogen Storage in the Netherlands",
+        "domain": "example.com"
+      },
+      "content": "The Netherlands is developing large-scale hydrogen storage facilities in salt caverns near Groningen."
+    }
+  ]
+}

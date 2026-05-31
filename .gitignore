@@ -6,3 +6,5 @@ dist/
 build/
 .cache/
 .pytest_cache/
+runs/
+*.zip

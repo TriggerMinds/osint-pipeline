@@ -129,22 +129,28 @@ class ResearchRunner:
 
         # Step 1: Expand
         t0 = time.time()
-        try:
-            expander = QueryExpander()
-            expanded = await expander.expand(query)
-        except QueryExpanderError as e:
-            artifact.add_error(f"expansion failed: {e}")
-            expanded = []
+        if cfg.fixture_mode:
+            expanded = await self._load_expansions_fixture(cfg, query)
+        else:
+            try:
+                expander = QueryExpander()
+                expanded = await expander.expand(query)
+            except QueryExpanderError as e:
+                artifact.add_error(f"expansion failed: {e}")
+                expanded = []
         timing.expand = time.time() - t0
 
         # Step 2: Generate dorks
         t0 = time.time()
-        try:
-            dork_gen = DorkGenerator()
-            schema = await dork_gen.generate(query, expanded or None)
-        except DorkGeneratorError as e:
-            artifact.add_error(f"dork generation failed: {e}")
-            schema = None
+        if cfg.fixture_mode:
+            schema = await self._load_dorks_fixture(cfg, query, expanded or None)
+        else:
+            try:
+                dork_gen = DorkGenerator()
+                schema = await dork_gen.generate(query, expanded or None)
+            except DorkGeneratorError as e:
+                artifact.add_error(f"dork generation failed: {e}")
+                schema = None
         timing.dork = time.time() - t0
 
         # Step 3: Route & execute
@@ -244,9 +250,9 @@ class ResearchRunner:
 
         all_sources = all_sources[:cfg.max_results]
 
-        # Step 6: Crawl enrichment (skipped in dry_run)
+        # Step 6: Crawl enrichment (skipped in dry_run / fixture_mode)
         t0 = time.time()
-        if cfg.dry_run:
+        if cfg.dry_run or cfg.fixture_mode:
             pass  # skip crawl in dry-run
         elif cfg.enrich:
             crawl_adapter = Crawl4AIAdapter()
@@ -268,9 +274,9 @@ class ResearchRunner:
                         artifact.add_error(f"crawl enrichment: {type(exc).__name__}: {exc}")
         timing.crawl = time.time() - t0
 
-        # Step 7: Extract evidence (skipped in dry_run)
+        # Step 7: Extract evidence (skipped in dry_run / fixture_mode)
         t0 = time.time()
-        if cfg.dry_run:
+        if cfg.dry_run or cfg.fixture_mode:
             evidence = EvidenceCollection(query=query)
         else:
             try:
@@ -334,6 +340,46 @@ class ResearchRunner:
         run_model.total_sources = artifact.sources_fetched
 
         return artifact
+
+    async def _load_expansions_fixture(self, cfg: ResearchRunConfig, query: str) -> list:
+        import json
+        from pathlib import Path
+        from ..models.query import ExpandedQuery
+
+        fixture_dir = Path(cfg.fixture_dir or "tests/fixtures/connectors")
+        path = fixture_dir / "expansions.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return [ExpandedQuery(**e) for e in data.get("expansions", [])]
+            except Exception:
+                pass
+        # Fallback: provide a single default expansion
+        return [ExpandedQuery(original=query, variants=[query], language="en", rationale="fixture fallback")]
+
+    async def _load_dorks_fixture(self, cfg: ResearchRunConfig, query: str, expanded=None):
+        import json
+        from pathlib import Path
+        from ..dork_generation.generator import DorkGenerator
+        from ..models.dork import DorkSchema, DorkQuery, DorkTarget
+
+        fixture_dir = Path(cfg.fixture_dir or "tests/fixtures/connectors")
+        path = fixture_dir / "dorks.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return DorkSchema(**data)
+            except Exception:
+                pass
+        # Fallback: generate a single minimal dork based on the query
+        return DorkSchema(
+            description=f"Fixture dork for: {query}",
+            dork_queries=[
+                DorkQuery(raw=query, target=DorkTarget.SEARXNG, description="fixture fallback"),
+                DorkQuery(raw=query, target=DorkTarget.GDELT, description="fixture fallback"),
+                DorkQuery(raw=query, target=DorkTarget.OPENALEX, description="fixture fallback"),
+            ],
+        )
 
     async def _load_fixture(self, cfg: ResearchRunConfig, connector: str, query: str) -> object | None:
         import json
