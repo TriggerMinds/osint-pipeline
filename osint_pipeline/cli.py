@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -15,18 +14,15 @@ from .config import get_settings
 from .query_expansion import QueryExpander, QueryExpanderError
 from .dork_generation import DorkGenerator, DorkGeneratorError, validate_dork
 from .multilingual import MultilingualTranslator
+from .runtime.checks import RuntimeChecker, mask_proxy_url
+from .router import RouterError, SourceRouter
+from .graphrag import EvidenceGraphExporter
+from .models.dork import DorkQuery, DorkSchema
 from .connectors import (
     SearXNGConnector, GDELTConnector, ArchiveCDXConnector, CommonCrawlConnector,
     OpenAlexConnector, GitHubSearchConnector, WikidataConnector, RedditConnector,
 )
-from .extraction import EvidenceExtractor
-from .ranking import EvidenceRanker
-from .runtime.checks import RuntimeChecker, mask_proxy_url
-from .crawler import Crawl4AIAdapter
-from .router import RouterError, SourceRouter
-from .graphrag import EvidenceGraphBuilder, EvidenceGraphExporter
-from .models.dork import DorkQuery, DorkSchema
-from .models.source import SourceResult
+from .research import ResearchRunner, ResearchRunConfig
 
 app = typer.Typer(name="osint", help="AI-driven OSINT research pipeline")
 console = Console()
@@ -411,36 +407,6 @@ def route_dork(
     console.print(table)
 
 
-_CONNECTOR_INSTANCES: dict[str, Any] | None = None
-
-
-def _get_connector(name: str):
-    global _CONNECTOR_INSTANCES
-    if _CONNECTOR_INSTANCES is None:
-        _CONNECTOR_INSTANCES = {
-            "searxng": SearXNGConnector(),
-            "gdelt": GDELTConnector(),
-            "archive_cdx": ArchiveCDXConnector(),
-            "commoncrawl": CommonCrawlConnector(),
-            "openalex": OpenAlexConnector(),
-            "github": GitHubSearchConnector(),
-            "wikidata": WikidataConnector(),
-            "reddit": RedditConnector(),
-        }
-    return _CONNECTOR_INSTANCES.get(name)
-
-
-def _dedup_sources(sources: list[SourceResult]) -> list[SourceResult]:
-    seen: set[str] = set()
-    deduped: list[SourceResult] = []
-    for s in sources:
-        key = s.metadata.url.rstrip("/").lower()
-        if key not in seen:
-            seen.add(key)
-            deduped.append(s)
-    return deduped
-
-
 @app.command()
 def run_research(
     query: str = typer.Argument(..., help="Research query"),
@@ -449,199 +415,41 @@ def run_research(
     enrich: bool = typer.Option(False, "--enrich", help="Crawl selected URLs via Crawl4AI"),
 ) -> None:
     """Execute a full research pipeline: expand, dork, route, fetch, extract, rank."""
-    from .query_expansion import QueryExpander
-    from .dork_generation import DorkGenerator
-    from .models.lineage import ResearchRun, QueryLineage
-    from .models.evidence import EvidenceCollection
-    from .extraction import EvidenceExtractor, EvidenceExtractorError
-    from .ranking import EvidenceRanker
-    from .graphrag import EvidenceGraphBuilder, EvidenceGraphExporter
-    from datetime import datetime, timezone
-    import uuid
+    runner = ResearchRunner()
+    config = ResearchRunConfig(max_results=max_results, enrich=enrich)
+    artifact = _run_async(runner.run(query, config))
 
-    run_id = f"run_{uuid.uuid4().hex[:12]}"
-    run = ResearchRun(id=run_id, original_query=query)
+    status_color = "[green]" if artifact.status == "completed" else "[yellow]"
+    t = artifact.timing
 
-    # Step 1: Expand
-    t0 = time.time()
-    try:
-        expander = QueryExpander()
-        expanded = _run_async(expander.expand(query))
-    except QueryExpanderError as e:
-        console.print(f"[red]Expansion failed: {e}[/red]")
-        raise typer.Exit(1)
-    t_expand = time.time() - t0
-
-    # Step 2: Generate dorks
-    t0 = time.time()
-    try:
-        dork_gen = DorkGenerator()
-        schema = _run_async(dork_gen.generate(query, expanded))
-    except DorkGeneratorError as e:
-        console.print(f"[red]Dork generation failed: {e}[/red]")
-        raise typer.Exit(1)
-    t_dork = time.time() - t0
-
-    # Step 3: Route & execute
-    t0 = time.time()
-    router = SourceRouter()
-    all_sources: list[SourceResult] = []
-    lineages: list[QueryLineage] = []
-    errors: list[str] = []
-    connector_results: list[dict] = []
-
-    for i, d in enumerate(schema.dork_queries[:max_results]):
-        try:
-            route = router.route(d)
-        except RouterError as e:
-            msg = f"dork[{i}]: {e}"
-            errors.append(msg)
-            continue
-
-        conn = _get_connector(route.connector)
-        if conn is None:
-            msg = f"dork[{i}]: no connector for '{route.connector}'"
-            errors.append(msg)
-            continue
-
-        li = router.build_lineage(
-            d, route,
-            lineage_id=f"l_{i:03d}",
-            original_query=query,
-        )
-        lineages.append(li)
-
-        query_for_search = d.raw or d.description or query
-        try:
-            result = _run_async(conn.search(query_for_search, language=d.language or "en"))
-        except Exception as exc:
-            msg = f"dork[{i}] ({route.connector}): {type(exc).__name__}: {exc}"
-            errors.append(msg)
-            continue
-
-        if result.error:
-            errors.append(f"dork[{i}] ({route.connector}): {result.error}")
-
-        for src in result.sources:
-            src.metadata.run_id = run_id
-            src.metadata.query_lineage_id = li.id
-            src.metadata.discovered_by_query = query_for_search
-
-        all_sources.extend(result.sources)
-
-        connector_results.append({
-            "connector": route.connector,
-            "query": query_for_search,
-            "sources_found": len(result.sources),
-            "error": result.error,
-        })
-
-    # Step 4: Deduplicate
-    all_sources = _dedup_sources(all_sources)
-    run.total_sources = len(all_sources)
-    t_fetch = time.time() - t0
-
-    # Step 5: Crawl enrichment (optional)
-    if enrich:
-        t0 = time.time()
-        crawl_adapter = Crawl4AIAdapter()
-        if crawl_adapter.available:
-            settings = get_settings()
-            proxy = settings.proxy_url or None
-            for src in all_sources[:10]:
-                if src.content is None or not src.content.strip():
-                    crawled = _run_async(crawl_adapter.crawl_url(src.metadata.url, proxy_url=proxy))
-                    if crawled and crawled.content:
-                        src.content = crawled.content
-        t_crawl = time.time() - t0
-    else:
-        t_crawl = 0.0
-
-    # Step 6: Extract evidence
-    t0 = time.time()
-    try:
-        extractor = EvidenceExtractor()
-        evidence = _run_async(extractor.extract(all_sources))
-    except (EvidenceExtractorError, Exception) as exc:
-        errors.append(f"evidence extraction: {type(exc).__name__}: {exc}")
-        from .models.evidence import EvidenceCollection
-        evidence = EvidenceCollection(query=query)
-    t_extract = time.time() - t0
-
-    # Step 7: Rank
-    t0 = time.time()
-    ranker = EvidenceRanker()
-    evidence = ranker.rank(evidence)
-    t_rank = time.time() - t0
-
-    # Step 8: Build and export graph
-    graph_builder = EvidenceGraphBuilder()
-    graph = graph_builder.build(evidence, lineage=lineages)
-
-    run.status = "completed_with_errors" if errors else "completed"
-
-    # Build result dict
-    result_dict = {
-        "run_id": run_id,
-        "query": query,
-        "status": "completed",
-        "timing": {
-            "expand": round(t_expand, 2),
-            "dork": round(t_dork, 2),
-            "fetch": round(t_fetch, 2),
-            "crawl": round(t_crawl, 2),
-            "extract": round(t_extract, 2),
-            "rank": round(t_rank, 2),
-            "total": round(t_expand + t_dork + t_fetch + t_crawl + t_extract + t_rank, 2),
-        },
-        "expansions": [e.model_dump() for e in expanded],
-        "dorks": [d.model_dump() for d in schema.dork_queries],
-        "routes": len(lineages),
-        "connector_results": connector_results,
-        "sources_fetched": run.total_sources,
-        "claims_extracted": sum(len(ev.claims) for ev in evidence.items),
-        "errors": errors if errors else None,
-        "lineages": [li.model_dump() for li in lineages],
-        "evidence": {
-            "items": [ev.model_dump() for ev in evidence.items[:50]],
-            "conflicting_claims": [
-                {
-                    "claim": c.claim,
-                    "confidence": c.confidence,
-                    "conflict_status": c.conflict_status.value,
-                }
-                for ev in evidence.items for c in ev.claims
-                if c.conflict_status.value in ("conflicting", "archive_only", "disappeared")
-            ],
-        },
-        "graph": {
-            "nodes": len(graph.nodes),
-            "edges": len(graph.edges),
-        },
-    }
-
-    if output:
-        output.write_text(
-            json.dumps(result_dict, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
-
-    # Console summary
     console.print(Panel.fit(
-        f"[bold]Research Run: {run_id}[/bold]\n\n"
-        f"Query: {query}\n"
-        f"Expansions: {len(expanded)}  |  Dorks: {len(schema.dork_queries)}\n"
-        f"Routes executed: {len(lineages)}  |  Sources: {run.total_sources}\n"
-        f"Claims: {sum(len(ev.claims) for ev in evidence.items)}\n"
-        f"Graph: {len(graph.nodes)} nodes, {len(graph.edges)} edges\n"
-        f"Status: {run.status}\n\n"
-        f"[dim]Timing: expand {t_expand:.1f}s | dork {t_dork:.1f}s | "
-        f"fetch {t_fetch:.1f}s | extract {t_extract:.1f}s | rank {t_rank:.1f}s[/dim]",
+        f"[bold]Research Run: {artifact.run_id}[/bold]\n\n"
+        f"Query: {artifact.query}\n"
+        f"Expansions: {len(artifact.expansions)}  |  Dorks: {len(artifact.dorks)}\n"
+        f"Routes executed: {artifact.routes}  |  Sources: {artifact.sources_fetched}\n"
+        f"Claims: {artifact.claims_extracted}\n"
+        f"Graph: {artifact.graph.nodes if artifact.graph else 0} nodes, "
+        f"{artifact.graph.edges if artifact.graph else 0} edges\n"
+        f"Status: {status_color}{artifact.status}[/]\n\n"
+        f"[dim]Timing: expand {t.expand:.1f}s | dork {t.dork:.1f}s | "
+        f"fetch {t.fetch:.1f}s | extract {t.extract:.1f}s | rank {t.rank:.1f}s[/dim]",
         title="Research Run",
     ))
 
+    if artifact.errors:
+        console.print("[yellow]Errors during run:[/yellow]")
+        for e in artifact.errors:
+            console.print(f"  [dim]{e}[/dim]")
+
     if output:
+        output.write_text(
+            json.dumps(artifact.model_dump_safe(), indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
         console.print(f"[green]Results written to {output}[/green]")
+
+    if artifact.errors:
+        raise typer.Exit(1)
 
 
 @app.command()
