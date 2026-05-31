@@ -23,8 +23,15 @@ class Settings(BaseSettings):
 
     max_concurrent_fetches: int = 10
     request_timeout: int = 30
+    request_retries: int = 3
+    request_backoff_factor: float = 1.5
     max_queries_per_expansion: int = 15
     evidence_min_confidence: float = 0.3
+
+    searxng_timeout: int = 30
+    gdelt_timeout: int = 30
+    archive_timeout: int = 60
+    commoncrawl_timeout: int = 60
 
 
 _settings: Settings | None = None
