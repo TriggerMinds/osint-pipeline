@@ -183,5 +183,42 @@ class TestSearchCLIDispatcher:
 
     def test_search_command_imports(self):
         from osint_pipeline.cli import app
-        # Verify the app is importable and has commands registered
         assert len(app.registered_commands) > 0
+
+    def _invoke_search(self, source: str):
+        """Helper: mock the connector endpoint and invoke osint search."""
+        import respx
+        from typer.testing import CliRunner
+        from osint_pipeline.cli import app
+        runner = CliRunner()
+
+        # Mock the relevant API endpoints so the search proceeds
+        mocks = {
+            "openalex": ("https://api.openalex.org/works", {"results": []}),
+            "github": ("https://api.github.com/search/repos", {"items": []}),
+            "wikidata": ("https://query.wikidata.org/sparql", {"results": {"bindings": []}}),
+            "reddit": ("https://www.reddit.com/search.json", {"data": {"children": []}}),
+        }
+
+        url, body = mocks.get(source, (None, None))
+        if url:
+            with respx.mock:
+                respx.get(url).respond(status_code=200, json=body)
+                return runner.invoke(app, ["search", "test", "--source", source])
+        return runner.invoke(app, ["search", "test", "--source", source])
+
+    def test_search_openalex(self):
+        r = self._invoke_search("openalex")
+        assert r.exit_code == 0
+
+    def test_search_github(self):
+        r = self._invoke_search("github")
+        assert r.exit_code == 0
+
+    def test_search_wikidata(self):
+        r = self._invoke_search("wikidata")
+        assert r.exit_code == 0
+
+    def test_search_reddit(self):
+        r = self._invoke_search("reddit")
+        assert r.exit_code == 0

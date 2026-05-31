@@ -139,7 +139,7 @@ def generate_dorks(
 def search(
     query: str = typer.Argument(..., help="Search query"),
     source: str = typer.Option(
-        "searxng", "--source", "-s", help="Source: searxng, gdelt"
+        "searxng", "--source", "-s", help="Source: searxng, gdelt, openalex, github, wikidata, reddit"
     ),
     language: str = typer.Option("en", "--language", "-l", help="Language code"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
